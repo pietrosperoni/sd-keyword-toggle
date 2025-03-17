@@ -1,0 +1,22 @@
+# Contents of `/sd-keyword-toggle/sd-keyword-toggle/preload.py`
+
+import os
+import sys
+
+def preload_resources():
+    # Preload necessary resources for the extension
+    resources = [
+        'javascript/keywordManager.js',
+        'javascript/toggleUI.js',
+        'javascript/settings.js',
+        'style.css'
+    ]
+    
+    for resource in resources:
+        if os.path.exists(resource):
+            print(f"Preloading resource: {resource}")
+        else:
+            print(f"Resource not found: {resource}")
+
+if __name__ == "__main__":
+    preload_resources()

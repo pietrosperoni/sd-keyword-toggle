@@ -1,0 +1,65 @@
+/* This file contains the styles for the extension's UI, ensuring a visually appealing layout for the keyword toggle system. */
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f4f4;
+    margin: 0;
+    padding: 20px;
+}
+
+.keyword-container {
+    display: flex;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.keyword {
+    padding: 10px 15px;
+    margin: 5px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.keyword.positive {
+    background-color: #4caf50; /* Green */
+    color: white;
+}
+
+.keyword.negative {
+    background-color: #f44336; /* Red */
+    color: white;
+}
+
+.keyword.neutral {
+    background-color: #e0e0e0; /* Grey */
+    color: black;
+}
+
+.settings-panel {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: white;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.settings-panel h2 {
+    margin-top: 0;
+}
+
+.settings-input {
+    margin-bottom: 10px;
+}
+
+.settings-input label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.settings-input input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
