@@ -1,3 +1,15 @@
+// Add at the top of your file
+
+// Helper function to debug styling
+function debugButtonStyle(button, label) {
+    console.log("===== BUTTON STYLE DEBUG: " + label + " =====");
+    console.log("Button text:", button.textContent);
+    console.log("Style attribute:", button.getAttribute("style"));
+    console.log("Computed backgroundColor:", window.getComputedStyle(button).backgroundColor);
+    console.log("Button HTML:", button.outerHTML);
+    console.log("===============================");
+}
+
 // Keyword states: 0 = neutral, 1 = positive, 2 = negative
 const keywordStates = {};
 
@@ -12,6 +24,9 @@ function toggleKeyword(button) {
     const keyword = button.textContent.trim().replace(/^[+\-] /, ''); // Remove any prefix
     const keywordId = button.id;
     
+    // Debug before any changes
+    debugButtonStyle(button, "BEFORE TOGGLE");
+    
     // Initialize state if not exists
     if (keywordStates[keywordId] === undefined) {
         keywordStates[keywordId] = 0;
@@ -21,18 +36,26 @@ function toggleKeyword(button) {
     keywordStates[keywordId] = (keywordStates[keywordId] + 1) % 3;
     console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]}`);
     
-    // Update button appearance - use setAttribute with !important
+    // Store state in data attribute too (for inspection)
+    button.dataset.kwState = keywordStates[keywordId];
+    
+    // Update button appearance - add !important to all style properties
     if (keywordStates[keywordId] === 1) { // positive - green
         button.textContent = "+ " + keyword;
-        button.setAttribute("style", "background-color: #00aa44 !important; color: white !important; font-weight: bold !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
-        button.style.backgroundColor = 'rgb(153, 68, 68)';
+        button.setAttribute("style", "");
+        button.style.cssText = "background-color: #00ff00 !important; color: black !important; font-weight: bold !important; margin: 2px !important; padding: 5px 10px !important; border-radius: 4px !important; cursor: pointer !important; border: 3px solid lime !important;";
     } else if (keywordStates[keywordId] === 2) { // negative - red
         button.textContent = "- " + keyword;
-        button.setAttribute("style", "background-color: #aa0000 !important; color: white !important; font-weight: bold !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
+        button.setAttribute("style", "");
+        button.style.cssText = "background-color: #ff0000 !important; color: white !important; font-weight: bold !important; margin: 2px !important; padding: 5px 10px !important; border-radius: 4px !important; cursor: pointer !important; border: 3px solid yellow !important;";
     } else { // neutral - gray
         button.textContent = keyword;
-        button.setAttribute("style", "background-color: #555555 !important; color: white !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
+        button.setAttribute("style", "");
+        button.style.cssText = "background-color: #555555 !important; color: white !important; margin: 2px !important; padding: 5px 10px !important; border-radius: 4px !important; cursor: pointer !important;";
     }
+    
+    // Debug after changes
+    debugButtonStyle(button, "AFTER TOGGLE");
     
     // Update prompts
     updatePrompts();
@@ -63,6 +86,40 @@ function cleanUserText(text) {
     cleanedText = cleanedText.replace(/,\s*,/g, ',').replace(/^\s*,\s*|\s*,\s*$/g, '').trim();
     
     return cleanedText;
+}
+
+// Add this function right after cleanUserText:
+
+function addGlobalStyles() {
+    // Check if styles already added
+    if (document.getElementById("kw-toggle-styles")) return;
+    
+    // Create style element
+    const styleEl = document.createElement("style");
+    styleEl.id = "kw-toggle-styles";
+    styleEl.textContent = `
+        /* Force button styles based on data-kw-state attribute */
+        [id^="keyword_"][data-kw-state="1"] {
+            background-color: #00aa44 !important;
+            color: white !important;
+            font-weight: bold !important;
+        }
+        
+        [id^="keyword_"][data-kw-state="2"] {
+            background-color: #aa0000 !important;
+            color: white !important;
+            font-weight: bold !important;
+        }
+        
+        [id^="keyword_"][data-kw-state="0"] {
+            background-color: #555555 !important;
+            color: white !important;
+        }
+    `;
+    
+    // Add to document
+    document.head.appendChild(styleEl);
+    console.log("Global styles added");
 }
 
 // Better approach to update prompts
@@ -189,17 +246,29 @@ function initializeButtons() {
             // Track this keyword
             const keyword = button.textContent.trim();
             knownKeywords.add(keyword);
-        } else {
+        } 
+        //else {
             // For already initialized buttons, DON'T reset their styling
             // This is the key fix - we skip styling for buttons we've already processed
-            console.log("Skipping already initialized button:", button.textContent);
-        }
+        //    console.log("Skipping already initialized button:", button.textContent);
+        //}
     });
 }
 
-// Initialize once at the start and then periodically check for new buttons
-document.addEventListener('DOMContentLoaded', initializeButtons);
-window.addEventListener('load', initializeButtons);
-setInterval(initializeButtons, 1000);
+// Update the initialization code:
+
+document.addEventListener('DOMContentLoaded', function() {
+    addGlobalStyles();
+    initializeButtons();
+});
+
+window.addEventListener('load', function() {
+    addGlobalStyles();
+    initializeButtons();
+});
+
+setInterval(function() {
+    initializeButtons();
+}, 1000);
 
 console.log("SD Keyword Toggle NEW script loaded");
