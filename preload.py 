@@ -9,7 +9,7 @@ script_callbacks.on_ui_tabs(on_ui_tabs)
 
 def preload_resources():
     # Only register the JavaScript file
-    js_path = os.path.join(os.path.dirname(__file__), "javascript", "keyword-toggle.js")
+    js_path = os.path.join(os.path.dirname(__file__), "javascript", "keyword-toggle-new.js")
     if os.path.exists(js_path):
         print(f"Loading JavaScript: {js_path}")
         script_callbacks.on_before_component(lambda: None, js=js_path)

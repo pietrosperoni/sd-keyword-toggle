@@ -18,6 +18,7 @@ function toggleKeyword(button) {
     
     // Toggle state: neutral -> positive -> negative -> neutral
     keywordStates[keywordId] = (keywordStates[keywordId] + 1) % 3;
+    console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]}`);
     
     // Update button appearance
     updateButtonStyle(button, keywordStates[keywordId]);
@@ -28,6 +29,7 @@ function toggleKeyword(button) {
 
 // Function to update button style based on state
 function updateButtonStyle(button, state) {
+    console.log("Updating button style:", button.textContent, state);
     switch (state) {
         case 0: // neutral
             button.style.backgroundColor = 'rgb(85, 85, 85)';
@@ -64,14 +66,6 @@ function findPromptTextareas() {
         }
     }
     
-    // If still not found, try by index if we have at least 28 textareas
-    if ((!positivePromptBox || !negativePromptBox) && allTextareas.length >= 29) {
-        console.log("Trying to find prompt boxes by index");
-        // Based on your console output, they are at indices 27 and 28
-        positivePromptBox = positivePromptBox || allTextareas[27];
-        negativePromptBox = negativePromptBox || allTextareas[28];
-    }
-    
     return { positivePromptBox, negativePromptBox };
 }
 
@@ -84,8 +78,6 @@ function updatePrompts() {
     
     // Debug info
     console.log("Prompt boxes found:", !!positivePromptBox, !!negativePromptBox);
-    console.log("Positive box:", positivePromptBox);
-    console.log("Negative box:", negativePromptBox);
     
     // If we still don't have both, we can't proceed
     if (!positivePromptBox || !negativePromptBox) {
@@ -93,20 +85,25 @@ function updatePrompts() {
         return;
     }
     
-    // Rest of the function remains the same...
-    // Extract user-entered text (non-keywords) if this is the first update
+    // Reset to base text (non-keywords)
     if (userPositiveText === "") {
-        userPositiveText = positivePromptBox.value;
-    }
-    if (userNegativeText === "") {
-        userNegativeText = negativePromptBox.value;
+        // Only initialize once
+        userPositiveText = positivePromptBox.value || "";
     }
     
-    // Build new prompts
+    if (userNegativeText === "") {
+        // Only initialize once
+        userNegativeText = negativePromptBox.value || "";
+    }
+    
+    // Build new prompts starting with user text
     let positivePrompt = userPositiveText;
     let negativePrompt = userNegativeText;
     
-    // Add keywords based on their states
+    // Collect keywords based on their states
+    let positiveKeywords = [];
+    let negativeKeywords = [];
+    
     for (const keywordId in keywordStates) {
         const state = keywordStates[keywordId];
         const keywordElem = document.getElementById(keywordId);
@@ -115,16 +112,26 @@ function updatePrompts() {
         const keyword = keywordElem.textContent.trim();
         
         if (state === 1) { // positive
-            if (positivePrompt && !positivePrompt.endsWith(' ') && !positivePrompt.endsWith(',')) {
-                positivePrompt += ', ';
-            }
-            positivePrompt += keyword;
+            positiveKeywords.push(keyword);
         } else if (state === 2) { // negative
-            if (negativePrompt && !negativePrompt.endsWith(' ') && !negativePrompt.endsWith(',')) {
-                negativePrompt += ', ';
-            }
-            negativePrompt += keyword;
+            negativeKeywords.push(keyword);
         }
+    }
+    
+    // Add positive keywords (if any)
+    if (positiveKeywords.length > 0) {
+        if (positivePrompt && !positivePrompt.endsWith(' ') && !positivePrompt.endsWith(',')) {
+            positivePrompt += ', ';
+        }
+        positivePrompt += positiveKeywords.join(', ');
+    }
+    
+    // Add negative keywords (if any)
+    if (negativeKeywords.length > 0) {
+        if (negativePrompt && !negativePrompt.endsWith(' ') && !negativePrompt.endsWith(',')) {
+            negativePrompt += ', ';
+        }
+        negativePrompt += negativeKeywords.join(', ');
     }
     
     // Update textboxes
@@ -138,7 +145,7 @@ function updatePrompts() {
     console.log("Updated prompt values:", positivePromptBox.value, negativePromptBox.value);
 }
 
-// More robust initialization that waits for elements to be available
+// Initialize the extension
 function initializeKeywordToggle() {
     console.log("SD Keyword Toggle: Initializing...");
     
@@ -170,24 +177,6 @@ function initializeKeywordToggle() {
                     keywordStates[button.id] = 0;
                 }
             });
-            
-            // Set up listener for user typing in the prompts
-            const positivePromptBox = document.getElementById('txt2img_prompt') || document.getElementById('img2img_prompt');
-            const negativePromptBox = document.getElementById('txt2img_negative_prompt') || document.getElementById('img2img_negative_prompt');
-            
-            if (positivePromptBox && !positivePromptBox.hasAttribute('data-toggle-initialized')) {
-                positivePromptBox.addEventListener('input', function() {
-                    userPositiveText = this.value;
-                });
-                positivePromptBox.setAttribute('data-toggle-initialized', 'true');
-            }
-            
-            if (negativePromptBox && !negativePromptBox.hasAttribute('data-toggle-initialized')) {
-                negativePromptBox.addEventListener('input', function() {
-                    userNegativeText = this.value;
-                });
-                negativePromptBox.setAttribute('data-toggle-initialized', 'true');
-            }
         }
     });
     
