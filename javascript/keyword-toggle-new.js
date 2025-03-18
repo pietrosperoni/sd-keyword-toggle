@@ -21,7 +21,7 @@ function toggleKeyword(button) {
     keywordStates[keywordId] = (keywordStates[keywordId] + 1) % 3;
     console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]}`);
     
-    // Update button appearance - set style properties directly
+    // Update button appearance - use setAttribute with !important
     if (keywordStates[keywordId] === 1) { // positive - green
         button.textContent = "+ " + keyword;
         button.setAttribute("style", "background-color: #00aa44 !important; color: white !important; font-weight: bold !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
@@ -179,7 +179,7 @@ function initializeButtons() {
                 toggleKeyword(this);
             });
             
-            // Initial styling - force with !important
+            // Initial styling - ONLY for new buttons
             button.setAttribute("style", "background-color: #555555 !important; color: white !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
             
             // Mark as initialized
@@ -188,6 +188,10 @@ function initializeButtons() {
             // Track this keyword
             const keyword = button.textContent.trim();
             knownKeywords.add(keyword);
+        } else {
+            // For already initialized buttons, DON'T reset their styling
+            // This is the key fix - we skip styling for buttons we've already processed
+            console.log("Skipping already initialized button:", button.textContent);
         }
     });
 }
