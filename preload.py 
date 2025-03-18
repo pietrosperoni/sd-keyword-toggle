@@ -1,22 +1,17 @@
-# Contents of `/sd-keyword-toggle/sd-keyword-toggle/preload.py`
-
 import os
-import sys
+from modules import script_callbacks
+
+def on_ui_tabs():
+    from scripts.main import KeywordToggleScript
+    return [(KeywordToggleScript(), "Keyword Toggle", "keyword_toggle")]
+
+script_callbacks.on_ui_tabs(on_ui_tabs)
 
 def preload_resources():
-    # Preload necessary resources for the extension
-    resources = [
-        'javascript/keywordManager.js',
-        'javascript/toggleUI.js',
-        'javascript/settings.js',
-        'style.css'
-    ]
-    
-    for resource in resources:
-        if os.path.exists(resource):
-            print(f"Preloading resource: {resource}")
-        else:
-            print(f"Resource not found: {resource}")
+    # Only register the JavaScript file
+    js_path = os.path.join(os.path.dirname(__file__), "javascript", "keyword-toggle.js")
+    if os.path.exists(js_path):
+        print(f"Loading JavaScript: {js_path}")
+        script_callbacks.on_before_component(lambda: None, js=js_path)
 
-if __name__ == "__main__":
-    preload_resources()
+preload_resources()
