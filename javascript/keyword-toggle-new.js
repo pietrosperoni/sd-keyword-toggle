@@ -34,24 +34,21 @@ function updateButtonAppearance(button) {
     // Reset all inline styles
     button.setAttribute("style", "");
     
-    // Use classes instead of inline styles
-    button.className = "keyword-button";
-    
-    // Add state-specific class
+    // Add state-specific class and style
     if (state === 1) {
-        button.classList.add("positive");
+        // POSITIVE - GREEN
         button.textContent = "+ " + originalText;
-        button.style.backgroundColor = "#00aa44"; // Bright green
+        button.style.backgroundColor = "#00aa44"; // GREEN for positive
         button.style.color = "white";
         button.style.fontWeight = "bold";
     } else if (state === 2) {
-        button.classList.add("negative");
+        // NEGATIVE - RED
         button.textContent = "- " + originalText;
-        button.style.backgroundColor = "#aa0000"; // Bright red
+        button.style.backgroundColor = "#aa0000"; // RED for negative
         button.style.color = "white";
         button.style.fontWeight = "bold";
     } else {
-        button.classList.add("neutral");
+        // NEUTRAL - GRAY
         button.textContent = originalText;
         button.style.backgroundColor = "#555555"; // Gray
         button.style.color = "white";
@@ -64,107 +61,140 @@ function updateButtonAppearance(button) {
     button.style.cursor = "pointer";
 }
 
-// Simple function to update prompts
+// Direct approach to update prompts
 function updatePrompts() {
-    // Find all textareas
-    const textareas = document.querySelectorAll('textarea');
-    let positivePrompt, negativePrompt;
+    console.log("Updating prompts");
     
-    // Specifically target the prompt textareas
-    for (let i = 0; i < textareas.length; i++) {
-        const textarea = textareas[i];
-        if (textarea.placeholder && textarea.placeholder.includes("Prompt") && 
-            !textarea.placeholder.includes("Negative")) {
-            positivePrompt = textarea;
-        }
-        if (textarea.placeholder && textarea.placeholder.includes("Negative")) {
-            negativePrompt = textarea;
-        }
+    // Find prompt textareas using direct selector for the version of Stable Diffusion you're using
+    const allTextareas = document.querySelectorAll('textarea');
+    console.log("Found", allTextareas.length, "textareas");
+    
+    // Try to get the positive and negative prompt textareas
+    let positivePrompt = document.querySelector('textarea[placeholder*="Prompt"]:not([placeholder*="Negative"])');
+    let negativePrompt = document.querySelector('textarea[placeholder*="Negative"]');
+    
+    // Fallback to indices based on your specific setup
+    if (!positivePrompt && !negativePrompt && allTextareas.length >= 29) {
+        console.log("Using fallback textareas by index");
+        positivePrompt = allTextareas[27];  // Based on your previous debug output
+        negativePrompt = allTextareas[28];  // Based on your previous debug output
     }
     
-    if (!positivePrompt || !negativePrompt) return;
+    if (!positivePrompt || !negativePrompt) {
+        console.log("Could not find prompt textareas!");
+        return;
+    }
     
-    // Initialize user text if needed
+    console.log("Found prompt textareas:", !!positivePrompt, !!negativePrompt);
+    
+    // Get current values for initial use
     if (userPositiveText === "") {
-        userPositiveText = positivePrompt.value;
+        userPositiveText = positivePrompt.value || "";
+        console.log("Initial positive text:", userPositiveText);
     }
+    
     if (userNegativeText === "") {
-        userNegativeText = negativePrompt.value;
+        userNegativeText = negativePrompt.value || "";
+        console.log("Initial negative text:", userNegativeText);
     }
     
-    // Start fresh with user text
-    let posText = userPositiveText;
-    let negText = userNegativeText;
-    
-    // Collect keywords by state
-    const posKeywords = [];
-    const negKeywords = [];
+    // Gather keywords based on their states
+    let posKeywords = [];
+    let negKeywords = [];
     
     for (const id in keywordStates) {
-        const elem = document.getElementById(id);
-        if (!elem) continue;
+        const btn = document.getElementById(id);
+        if (!btn) continue;
         
-        const word = elem.textContent.trim().replace(/^[+\-] /, '');
+        const word = btn.textContent.trim().replace(/^[+\-] /, '');
         const state = keywordStates[id];
         
         if (state === 1) posKeywords.push(word);
         else if (state === 2) negKeywords.push(word);
     }
     
-    // Add keywords to prompts
+    console.log("Positive keywords:", posKeywords);
+    console.log("Negative keywords:", negKeywords);
+    
+    // Build the new prompt strings
+    let newPositiveText = userPositiveText;
+    let newNegativeText = userNegativeText;
+    
+    // Add keywords with proper formatting
     if (posKeywords.length > 0) {
-        if (posText && !posText.endsWith(',') && !posText.endsWith(' ')) {
-            posText += ', ';
+        if (newPositiveText && !newPositiveText.endsWith(' ') && !newPositiveText.endsWith(',')) {
+            newPositiveText += ', ';
         }
-        posText += posKeywords.join(', ');
+        newPositiveText += posKeywords.join(', ');
     }
     
     if (negKeywords.length > 0) {
-        if (negText && !negText.endsWith(',') && !negText.endsWith(' ')) {
-            negText += ', ';
+        if (newNegativeText && !newNegativeText.endsWith(' ') && !newNegativeText.endsWith(',')) {
+            newNegativeText += ', ';
         }
-        negText += negKeywords.join(', ');
+        newNegativeText += negKeywords.join(', ');
     }
     
-    // Update textareas
-    positivePrompt.value = posText;
-    negativePrompt.value = negText;
+    console.log("New positive text:", newPositiveText);
+    console.log("New negative text:", newNegativeText);
     
-    // Trigger input events
-    positivePrompt.dispatchEvent(new Event('input', {bubbles:true}));
-    negativePrompt.dispatchEvent(new Event('input', {bubbles:true}));
+    // Super direct approach to update textareas
+    try {
+        // Method 1: Direct value setting
+        positivePrompt.value = newPositiveText;
+        negativePrompt.value = newNegativeText;
+        
+        // Method 2: Trigger change event
+        positivePrompt.dispatchEvent(new Event('input', {bubbles: true}));
+        negativePrompt.dispatchEvent(new Event('input', {bubbles: true}));
+        
+        // Method 3: Focus and blur to ensure change is registered
+        positivePrompt.focus();
+        setTimeout(() => {
+            positivePrompt.blur();
+            negativePrompt.focus();
+            setTimeout(() => {
+                negativePrompt.blur();
+            }, 10);
+        }, 10);
+        
+        console.log("Textarea values updated");
+    } catch (e) {
+        console.error("Error updating textareas:", e);
+    }
 }
 
-// Initialize when the page loads
-document.addEventListener('DOMContentLoaded', function() {
-    // Find and initialize all keyword buttons
-    setInterval(function() {
-        const buttons = document.querySelectorAll('[id^="keyword_"]');
-        
-        buttons.forEach(button => {
-            if (!button.hasAttribute('data-initialized')) {
-                button.setAttribute('data-initialized', 'true');
-                
-                // Add click handler
-                button.addEventListener('click', function() {
-                    toggleKeyword(this);
-                });
-                
-                // Initial styling
-                button.style.margin = "2px";
-                button.style.padding = "5px 10px";
-                button.style.borderRadius = "4px";
-                button.style.backgroundColor = "#555555";
-                button.style.color = "white";
-                button.style.cursor = "pointer";
-            }
-        });
-    }, 1000); // Check every second
-});
+// Initialize buttons
+function initializeButtons() {
+    const buttons = document.querySelectorAll('[id^="keyword_"]');
+    console.log("Found keyword buttons:", buttons.length);
+    
+    buttons.forEach(button => {
+        if (!button.hasAttribute('data-kw-initialized')) {
+            button.setAttribute('data-kw-initialized', 'true');
+            
+            button.addEventListener('click', function() {
+                toggleKeyword(this);
+            });
+            
+            // Initial styling
+            button.style.margin = "2px";
+            button.style.padding = "5px 10px";
+            button.style.borderRadius = "4px";
+            button.style.backgroundColor = "#555555";
+            button.style.color = "white";
+            button.style.cursor = "pointer";
+        }
+    });
+}
 
-// Additional gradio-specific initialization
-window.addEventListener('gradio:mounted', function() {
-    console.log("Gradio components mounted - initializing keyword toggle");
-});
+// Multiple entry points to ensure initialization
+document.addEventListener('DOMContentLoaded', initializeButtons);
+window.addEventListener('load', initializeButtons);
+setInterval(initializeButtons, 1000); // Keep checking for new buttons
+
+// Gradio-specific events
+document.addEventListener('gradio:mounted', initializeButtons);
+document.addEventListener('gradio:change', initializeButtons);
 
 console.log("SD Keyword Toggle NEW script loaded");
