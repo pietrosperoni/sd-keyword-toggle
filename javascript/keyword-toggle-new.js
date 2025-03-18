@@ -1,9 +1,10 @@
 // Keyword states: 0 = neutral, 1 = positive, 2 = negative
 const keywordStates = {};
 
-// Store non-keyword text entered by user
-let userPositiveText = "";
-let userNegativeText = "";
+// Store base prompt text (excluding keywords)
+let basePositiveText = "";
+let baseNegativeText = "";
+let hasInitialized = false;
 
 // Function to toggle keyword state and update prompt
 function toggleKeyword(button) {
@@ -19,7 +20,7 @@ function toggleKeyword(button) {
     keywordStates[keywordId] = (keywordStates[keywordId] + 1) % 3;
     console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]}`);
     
-    // Update button appearance - more forceful approach
+    // Update button appearance
     updateButtonAppearance(button);
     
     // Update prompts
@@ -31,43 +32,42 @@ function updateButtonAppearance(button) {
     const state = keywordStates[button.id] || 0;
     const originalText = button.textContent.trim().replace(/^[+\-] /, '');
     
-    // Reset all inline styles
-    button.setAttribute("style", "");
+    // Force clear all styles first
+    button.style = {};
     
-    // Add state-specific class and style
     if (state === 1) {
         // POSITIVE - GREEN
         button.textContent = "+ " + originalText;
-        button.style.backgroundColor = "#00aa44"; // GREEN for positive
+        button.style.backgroundColor = "#00aa44";
         button.style.color = "white";
         button.style.fontWeight = "bold";
     } else if (state === 2) {
         // NEGATIVE - RED
         button.textContent = "- " + originalText;
-        button.style.backgroundColor = "#aa0000"; // RED for negative
+        button.style.backgroundColor = "#aa0000";
         button.style.color = "white";
         button.style.fontWeight = "bold";
     } else {
         // NEUTRAL - GRAY
         button.textContent = originalText;
-        button.style.backgroundColor = "#555555"; // Gray
+        button.style.backgroundColor = "#555555";
         button.style.color = "white";
     }
     
-    // Common styles
+    // Make sure these styles always apply
     button.style.margin = "2px";
     button.style.padding = "5px 10px";
     button.style.borderRadius = "4px";
     button.style.cursor = "pointer";
+    button.style.display = "inline-block";
 }
 
-// Direct approach to update prompts
+// Better approach to update prompts
 function updatePrompts() {
     console.log("Updating prompts");
     
-    // Find prompt textareas using direct selector for the version of Stable Diffusion you're using
+    // Find prompt textareas
     const allTextareas = document.querySelectorAll('textarea');
-    console.log("Found", allTextareas.length, "textareas");
     
     // Try to get the positive and negative prompt textareas
     let positivePrompt = document.querySelector('textarea[placeholder*="Prompt"]:not([placeholder*="Negative"])');
@@ -75,9 +75,8 @@ function updatePrompts() {
     
     // Fallback to indices based on your specific setup
     if (!positivePrompt && !negativePrompt && allTextareas.length >= 29) {
-        console.log("Using fallback textareas by index");
-        positivePrompt = allTextareas[27];  // Based on your previous debug output
-        negativePrompt = allTextareas[28];  // Based on your previous debug output
+        positivePrompt = allTextareas[27];
+        negativePrompt = allTextareas[28];
     }
     
     if (!positivePrompt || !negativePrompt) {
@@ -85,20 +84,19 @@ function updatePrompts() {
         return;
     }
     
-    console.log("Found prompt textareas:", !!positivePrompt, !!negativePrompt);
-    
-    // Get current values for initial use
-    if (userPositiveText === "") {
-        userPositiveText = positivePrompt.value || "";
-        console.log("Initial positive text:", userPositiveText);
+    // Initialize base text the first time only
+    if (!hasInitialized) {
+        basePositiveText = positivePrompt.value || "";
+        baseNegativeText = negativePrompt.value || "";
+        hasInitialized = true;
+        console.log("Initialized base text:", basePositiveText, baseNegativeText);
     }
     
-    if (userNegativeText === "") {
-        userNegativeText = negativePrompt.value || "";
-        console.log("Initial negative text:", userNegativeText);
-    }
+    // Always start from the base text
+    let newPositiveText = basePositiveText;
+    let newNegativeText = baseNegativeText;
     
-    // Gather keywords based on their states
+    // Collect keywords based on state
     let posKeywords = [];
     let negKeywords = [];
     
@@ -113,55 +111,57 @@ function updatePrompts() {
         else if (state === 2) negKeywords.push(word);
     }
     
-    console.log("Positive keywords:", posKeywords);
-    console.log("Negative keywords:", negKeywords);
-    
-    // Build the new prompt strings
-    let newPositiveText = userPositiveText;
-    let newNegativeText = userNegativeText;
-    
-    // Add keywords with proper formatting
+    // Add positive keywords if any
     if (posKeywords.length > 0) {
-        if (newPositiveText && !newPositiveText.endsWith(' ') && !newPositiveText.endsWith(',')) {
+        if (newPositiveText && newPositiveText.length > 0 && 
+            !newPositiveText.endsWith(' ') && !newPositiveText.endsWith(',')) {
             newPositiveText += ', ';
         }
         newPositiveText += posKeywords.join(', ');
     }
     
+    // Add negative keywords if any
     if (negKeywords.length > 0) {
-        if (newNegativeText && !newNegativeText.endsWith(' ') && !newNegativeText.endsWith(',')) {
+        if (newNegativeText && newNegativeText.length > 0 && 
+            !newNegativeText.endsWith(' ') && !newNegativeText.endsWith(',')) {
             newNegativeText += ', ';
         }
         newNegativeText += negKeywords.join(', ');
     }
     
-    console.log("New positive text:", newPositiveText);
-    console.log("New negative text:", newNegativeText);
+    console.log("Setting prompts to:", newPositiveText, newNegativeText);
     
-    // Super direct approach to update textareas
+    // Update the textareas
     try {
-        // Method 1: Direct value setting
+        // Set values
         positivePrompt.value = newPositiveText;
         negativePrompt.value = newNegativeText;
         
-        // Method 2: Trigger change event
+        // Trigger events to ensure UI updates
         positivePrompt.dispatchEvent(new Event('input', {bubbles: true}));
         negativePrompt.dispatchEvent(new Event('input', {bubbles: true}));
-        
-        // Method 3: Focus and blur to ensure change is registered
-        positivePrompt.focus();
-        setTimeout(() => {
-            positivePrompt.blur();
-            negativePrompt.focus();
-            setTimeout(() => {
-                negativePrompt.blur();
-            }, 10);
-        }, 10);
         
         console.log("Textarea values updated");
     } catch (e) {
         console.error("Error updating textareas:", e);
     }
+    
+    // Allow updating base text when user edits
+    positivePrompt.addEventListener('input', function(e) {
+        if (!e.isTrusted) return; // Skip events from our script
+        
+        // Update base text to whatever the user types
+        basePositiveText = this.value;
+        console.log("User updated positive text:", basePositiveText);
+    });
+    
+    negativePrompt.addEventListener('input', function(e) {
+        if (!e.isTrusted) return; // Skip events from our script
+        
+        // Update base text to whatever the user types
+        baseNegativeText = this.value;
+        console.log("User updated negative text:", baseNegativeText);
+    });
 }
 
 // Initialize buttons
@@ -171,8 +171,7 @@ function initializeButtons() {
     
     buttons.forEach(button => {
         if (!button.hasAttribute('data-kw-initialized')) {
-            button.setAttribute('data-kw-initialized', 'true');
-            
+            // Add click handler
             button.addEventListener('click', function() {
                 toggleKeyword(this);
             });
@@ -184,17 +183,17 @@ function initializeButtons() {
             button.style.backgroundColor = "#555555";
             button.style.color = "white";
             button.style.cursor = "pointer";
+            button.style.display = "inline-block";
+            
+            // Mark as initialized
+            button.setAttribute('data-kw-initialized', 'true');
         }
     });
 }
 
-// Multiple entry points to ensure initialization
+// Initialize once at the start and then periodically check for new buttons
 document.addEventListener('DOMContentLoaded', initializeButtons);
 window.addEventListener('load', initializeButtons);
-setInterval(initializeButtons, 1000); // Keep checking for new buttons
-
-// Gradio-specific events
-document.addEventListener('gradio:mounted', initializeButtons);
-document.addEventListener('gradio:change', initializeButtons);
+setInterval(initializeButtons, 1000);
 
 console.log("SD Keyword Toggle NEW script loaded");
