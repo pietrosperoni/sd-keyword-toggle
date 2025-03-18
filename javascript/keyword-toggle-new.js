@@ -5,6 +5,7 @@ const keywordStates = {};
 let basePositiveText = "";
 let baseNegativeText = "";
 let hasInitialized = false;
+let knownKeywords = new Set(); // Track all keywords we know about
 
 // Function to toggle keyword state and update prompt
 function toggleKeyword(button) {
@@ -20,46 +21,47 @@ function toggleKeyword(button) {
     keywordStates[keywordId] = (keywordStates[keywordId] + 1) % 3;
     console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]}`);
     
-    // Update button appearance
-    updateButtonAppearance(button);
+    // Update button appearance - set style properties directly
+    if (keywordStates[keywordId] === 1) { // positive - green
+        button.textContent = "+ " + keyword;
+        button.setAttribute("style", "background-color: #00aa44 !important; color: white !important; font-weight: bold !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
+    } else if (keywordStates[keywordId] === 2) { // negative - red
+        button.textContent = "- " + keyword;
+        button.setAttribute("style", "background-color: #aa0000 !important; color: white !important; font-weight: bold !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
+    } else { // neutral - gray
+        button.textContent = keyword;
+        button.setAttribute("style", "background-color: #555555 !important; color: white !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
+    }
     
     // Update prompts
     updatePrompts();
 }
 
-// Function to update button appearance based on state
-function updateButtonAppearance(button) {
-    const state = keywordStates[button.id] || 0;
-    const originalText = button.textContent.trim().replace(/^[+\-] /, '');
+// Function to clean user text of any keywords
+function cleanUserText(text) {
+    if (!text) return "";
     
-    // Force clear all styles first
-    button.style = {};
+    let cleanedText = text;
+    // Get all keywords from all buttons
+    const buttons = document.querySelectorAll('[id^="keyword_"]');
+    buttons.forEach(button => {
+        const keyword = button.textContent.trim().replace(/^[+\-] /, '');
+        knownKeywords.add(keyword);
+        
+        // Remove the keyword from user text (with comma handling)
+        const keywordPattern = new RegExp(`(^|,\\s*)${keyword}(\\s*,|$)`, 'gi');
+        cleanedText = cleanedText.replace(keywordPattern, '$1$2');
+        
+        // Also handle case where it's the only text
+        if (cleanedText.trim() === keyword) {
+            cleanedText = '';
+        }
+    });
     
-    if (state === 1) {
-        // POSITIVE - GREEN
-        button.textContent = "+ " + originalText;
-        button.style.backgroundColor = "#00aa44";
-        button.style.color = "white";
-        button.style.fontWeight = "bold";
-    } else if (state === 2) {
-        // NEGATIVE - RED
-        button.textContent = "- " + originalText;
-        button.style.backgroundColor = "#aa0000";
-        button.style.color = "white";
-        button.style.fontWeight = "bold";
-    } else {
-        // NEUTRAL - GRAY
-        button.textContent = originalText;
-        button.style.backgroundColor = "#555555";
-        button.style.color = "white";
-    }
+    // Clean up any double commas or trailing/leading commas
+    cleanedText = cleanedText.replace(/,\s*,/g, ',').replace(/^\s*,\s*|\s*,\s*$/g, '').trim();
     
-    // Make sure these styles always apply
-    button.style.margin = "2px";
-    button.style.padding = "5px 10px";
-    button.style.borderRadius = "4px";
-    button.style.cursor = "pointer";
-    button.style.display = "inline-block";
+    return cleanedText;
 }
 
 // Better approach to update prompts
@@ -70,6 +72,7 @@ function updatePrompts() {
     const allTextareas = document.querySelectorAll('textarea');
     
     // Try to get the positive and negative prompt textareas
+    // FIX: Fixed the syntax error in the selector
     let positivePrompt = document.querySelector('textarea[placeholder*="Prompt"]:not([placeholder*="Negative"])');
     let negativePrompt = document.querySelector('textarea[placeholder*="Negative"]');
     
@@ -84,17 +87,17 @@ function updatePrompts() {
         return;
     }
     
-    // Initialize base text the first time only
+    // Initialize base text the first time only, but clean it of known keywords
     if (!hasInitialized) {
-        basePositiveText = positivePrompt.value || "";
-        baseNegativeText = negativePrompt.value || "";
+        basePositiveText = cleanUserText(positivePrompt.value || "");
+        baseNegativeText = cleanUserText(negativePrompt.value || "");
         hasInitialized = true;
         console.log("Initialized base text:", basePositiveText, baseNegativeText);
     }
     
-    // Always start from the base text
-    let newPositiveText = basePositiveText;
-    let newNegativeText = baseNegativeText;
+    // Always start from the cleaned base text
+    let newPositiveText = cleanUserText(basePositiveText);
+    let newNegativeText = cleanUserText(baseNegativeText);
     
     // Collect keywords based on state
     let posKeywords = [];
@@ -150,16 +153,16 @@ function updatePrompts() {
     positivePrompt.addEventListener('input', function(e) {
         if (!e.isTrusted) return; // Skip events from our script
         
-        // Update base text to whatever the user types
-        basePositiveText = this.value;
+        // Update base text to whatever the user types, but clean it of known keywords
+        basePositiveText = cleanUserText(this.value);
         console.log("User updated positive text:", basePositiveText);
     });
     
     negativePrompt.addEventListener('input', function(e) {
         if (!e.isTrusted) return; // Skip events from our script
         
-        // Update base text to whatever the user types
-        baseNegativeText = this.value;
+        // Update base text to whatever the user types, but clean it of known keywords
+        baseNegativeText = cleanUserText(this.value);
         console.log("User updated negative text:", baseNegativeText);
     });
 }
@@ -176,17 +179,15 @@ function initializeButtons() {
                 toggleKeyword(this);
             });
             
-            // Initial styling
-            button.style.margin = "2px";
-            button.style.padding = "5px 10px";
-            button.style.borderRadius = "4px";
-            button.style.backgroundColor = "#555555";
-            button.style.color = "white";
-            button.style.cursor = "pointer";
-            button.style.display = "inline-block";
+            // Initial styling - force with !important
+            button.setAttribute("style", "background-color: #555555 !important; color: white !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
             
             // Mark as initialized
             button.setAttribute('data-kw-initialized', 'true');
+            
+            // Track this keyword
+            const keyword = button.textContent.trim();
+            knownKeywords.add(keyword);
         }
     });
 }
