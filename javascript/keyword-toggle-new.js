@@ -25,6 +25,7 @@ function toggleKeyword(button) {
     if (keywordStates[keywordId] === 1) { // positive - green
         button.textContent = "+ " + keyword;
         button.setAttribute("style", "background-color: #00aa44 !important; color: white !important; font-weight: bold !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
+        button.style.backgroundColor = 'rgb(153, 68, 68)';
     } else if (keywordStates[keywordId] === 2) { // negative - red
         button.textContent = "- " + keyword;
         button.setAttribute("style", "background-color: #aa0000 !important; color: white !important; font-weight: bold !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
