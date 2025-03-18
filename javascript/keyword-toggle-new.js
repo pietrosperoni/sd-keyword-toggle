@@ -43,15 +43,55 @@ function toggleKeyword(button) {
     if (keywordStates[keywordId] === 1) { // positive - green
         button.textContent = "+ " + keyword;
         button.setAttribute("style", "");
-        button.style.cssText = "background-color: #00ff00 !important; color: black !important; font-weight: bold !important; margin: 2px !important; padding: 5px 10px !important; border-radius: 4px !important; cursor: pointer !important; border: 3px solid lime !important;";
+        // Add !important to EVERYTHING and make foreground/background contrast high
+        button.style.cssText = `
+            background: #00ff00 !important;
+            color: black !important;
+            font-weight: 900 !important;
+            margin: 2px !important;
+            padding: 5px 10px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            border: 5px solid lime !important;
+            box-shadow: 0 0 10px lime !important;
+            text-shadow: 1px 1px 0 white !important;
+            outline: none !important;
+            position: relative !important;
+            z-index: 100 !important;
+        `;
     } else if (keywordStates[keywordId] === 2) { // negative - red
         button.textContent = "- " + keyword;
         button.setAttribute("style", "");
-        button.style.cssText = "background-color: #ff0000 !important; color: white !important; font-weight: bold !important; margin: 2px !important; padding: 5px 10px !important; border-radius: 4px !important; cursor: pointer !important; border: 3px solid yellow !important;";
+        button.style.cssText = `
+            background: #ff0000 !important;
+            color: white !important;
+            font-weight: 900 !important;
+            margin: 2px !important;
+            padding: 5px 10px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            border: 5px solid yellow !important;
+            box-shadow: 0 0 10px red !important;
+            text-shadow: 1px 1px 0 black !important;
+            outline: none !important;
+            position: relative !important;
+            z-index: 100 !important;
+        `;
     } else { // neutral - gray
         button.textContent = keyword;
         button.setAttribute("style", "");
-        button.style.cssText = "background-color: #555555 !important; color: white !important; margin: 2px !important; padding: 5px 10px !important; border-radius: 4px !important; cursor: pointer !important;";
+        button.style.cssText = `
+            background: #555555 !important;
+            color: white !important;
+            margin: 2px !important;
+            padding: 5px 10px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            border: none !important;
+            outline: none !important;
+            position: relative !important;
+            z-index: 100 !important;
+        `;
     }
     
     // Debug after changes
