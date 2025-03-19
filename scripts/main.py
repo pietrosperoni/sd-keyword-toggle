@@ -1,7 +1,9 @@
 import os
-import json
 import gradio as gr
 from modules import script_callbacks, scripts, shared
+
+# This may appear as an unresolved import error in IDEs, but it works correctly at runtime
+# because the WebUI adds its modules directory to Python's path when loading extensions
 
 class KeywordToggleScript(scripts.Script):
     def __init__(self):
