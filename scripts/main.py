@@ -31,14 +31,9 @@ class KeywordToggleScript(scripts.Script):
                     except Exception as e:
                         print(f"Error reading {file_path}: {e}")
         
-        # If no keywords found in text files, fall back to keywords.json
         if not keywords:
-            print("No keyword files found, falling back to keywords.json")
-            keywords_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "keywords.json")
-            if os.path.exists(keywords_path):
-                with open(keywords_path, 'r') as f:
-                    return json.load(f)
-            return {"Animals": ["cat", "dog", "bird"], "Styles": ["anime", "photorealistic", "oil painting"]}
+            print("No keyword files found, using defaults")
+            return {"Example": ["keyword1", "keyword2"], "Quality": ["masterpiece", "best quality"]}
         
         return keywords
     
@@ -74,25 +69,3 @@ def on_app_started(demo, app):
 
 # Register the callback
 script_callbacks.on_app_started(on_app_started)
-
-# Register settings UI
-def on_ui_settings():
-    try:
-        section = ("keyword_toggle", "Keyword Toggle")
-        keywords_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "keywords.json")
-        
-        # Load existing keywords
-        categories = {}
-        if os.path.exists(keywords_path):
-            with open(keywords_path, 'r') as f:
-                categories = json.load(f)
-        
-        # Updated to avoid using ui_settings attribute which may not exist
-        for category in categories:
-            keywords_str = ", ".join(categories[category])
-            script_callbacks.on_ui_settings(lambda : None)  # Non-failing alternative
-            
-    except Exception as e:
-        print(f"Warning: Could not add settings UI: {e}")
-
-script_callbacks.on_ui_settings(on_ui_settings)
