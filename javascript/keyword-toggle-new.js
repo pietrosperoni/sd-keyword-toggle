@@ -369,7 +369,76 @@ function parseAndCreateKeywords(configText) {
     }
 }
 
-function createKeywordButtons() {
+// Add this function right before the createKeywordButtons function
+
+// Replace the loadKeywordsFromFiles function with this API-based version:
+
+async function loadKeywordsFromFiles() {
+    // Reset known keywords
+    knownKeywords = new Set();
+    
+    try {
+        // Use the API to get keywords from the server
+        const response = await fetch('/sd-keyword-toggle/get-keywords');
+        
+        if (response.ok) {
+            const data = await response.json();
+            console.log("Successfully loaded keywords from server:", data);
+            
+            // Add all keywords to the known keywords set
+            const keywordData = data.keywords;
+            for (const category in keywordData) {
+                keywordData[category].forEach(keyword => knownKeywords.add(keyword));
+            }
+            
+            return keywordData;
+        } else {
+            console.error("Failed to load keywords from API:", response.status, response.statusText);
+        }
+    } catch (error) {
+        console.error("Error loading keywords from API:", error);
+    }
+    
+    // Fallback to keywords.json if API fails
+    try {
+        console.log("Falling back to keywords.json");
+        const jsonResponse = await fetch('/extensions/sd-keyword-toggle/keywords.json');
+        
+        if (jsonResponse.ok) {
+            const jsonData = await jsonResponse.json();
+            
+            // Add all keywords to the known keywords set
+            for (const category in jsonData) {
+                jsonData[category].forEach(keyword => knownKeywords.add(keyword));
+            }
+            
+            return jsonData;
+        }
+    } catch (jsonError) {
+        console.error("Error loading keywords.json:", jsonError);
+    }
+    
+    // Default keywords if everything fails
+    console.log("Using default keywords");
+    const defaultKeywords = {
+        "Quality": ["masterpiece", "high quality", "best quality"],
+        "Style": ["anime", "photorealistic", "digital art"]
+    };
+    
+    for (const category in defaultKeywords) {
+        defaultKeywords[category].forEach(keyword => knownKeywords.add(keyword));
+    }
+    
+    return defaultKeywords;
+}
+
+// Replace your existing createKeywordButtons function with this version
+
+async function createKeywordButtons() {
+    // Get keywords from files or JSON
+    const keywordData = await loadKeywordsFromFiles();
+    
+    // Continue with your existing code but use keywordData instead of keywordConfig
     // Find where to add buttons - look for the existing keyword toggle element if any
     let targetElement = document.querySelector('#keyword-toggle-container');
     
@@ -393,7 +462,7 @@ function createKeywordButtons() {
     targetElement.innerHTML = '';
     
     // Add category headers and keyword buttons
-    for (const category in keywordConfig) {
+    for (const category in keywordData) {
         // Create category header
         const categoryHeader = document.createElement('div');
         categoryHeader.className = 'keyword-category';
@@ -409,8 +478,11 @@ function createKeywordButtons() {
         buttonContainer.style.gap = '5px';
         targetElement.appendChild(buttonContainer);
         
+        // Log number of buttons for debugging
+        console.log(`Found keyword buttons: ${keywordData[category].length}`);
+        
         // Add keyword buttons
-        keywordConfig[category].forEach(keyword => {
+        keywordData[category].forEach(keyword => {
             // Create a unique ID for this keyword
             const keywordId = `keyword_${keyword.replace(/\s+/g, '_').toLowerCase()}`;
             
@@ -578,7 +650,11 @@ function createConfigTab() {
 }
 
 // Initialize buttons
-function initializeButtons() {
+async function initializeButtons() {
+    // First try to create buttons from text files
+    await createKeywordButtons();
+    
+    // Then initialize any existing buttons (from previous methods)
     const buttons = document.querySelectorAll('[id^="keyword_"]');
     console.log("Found keyword buttons:", buttons.length);
     
@@ -598,33 +674,24 @@ function initializeButtons() {
             // Track this keyword
             const keyword = button.textContent.trim();
             knownKeywords.add(keyword);
-        } 
-        //else {
-            // For already initialized buttons, DON'T reset their styling
-            // This is the key fix - we skip styling for buttons we've already processed
-        //    console.log("Skipping already initialized button:", button.textContent);
-        //}
+        }
     });
 }
 
-// Update the initialization code:
-
-document.addEventListener('DOMContentLoaded', function() {
+// Update the initialization code to handle async:
+document.addEventListener('DOMContentLoaded', async function() {
     addGlobalStyles();
-    initializeButtons();
-    createConfigPanel();
-    createConfigTab();
+    await initializeButtons();
 });
 
-window.addEventListener('load', function() {
+window.addEventListener('load', async function() {
     addGlobalStyles();
-    initializeButtons();
-    createConfigPanel();
-    createConfigTab();
+    await initializeButtons();
 });
 
-setInterval(function() {
-    initializeButtons();
-}, 1000);
+// Set interval to periodically check for new buttons
+setInterval(async function() {
+    await initializeButtons();
+}, 2000); // Increased interval to reduce console spam
 
 console.log("SD Keyword Toggle NEW script loaded");
