@@ -1,14 +1,3 @@
-// Add at the top of your file
-
-// Helper function to debug styling
-function debugButtonStyle(button, label) {
-    console.log("===== BUTTON STYLE DEBUG: " + label + " =====");
-    console.log("Button text:", button.textContent);
-    console.log("Style attribute:", button.getAttribute("style"));
-    console.log("Computed backgroundColor:", window.getComputedStyle(button).backgroundColor);
-    console.log("Button HTML:", button.outerHTML);
-    console.log("===============================");
-}
 
 // Keyword states: 0 = neutral, 1 = positive, 2 = negative
 const keywordStates = {};
@@ -23,10 +12,7 @@ let knownKeywords = new Set(); // Track all keywords we know about
 function toggleKeyword(button) {
     const keyword = button.textContent.trim().replace(/^[+\-] /, ''); // Remove any prefix
     const keywordId = button.id;
-    
-    // Debug before any changes
-    debugButtonStyle(button, "BEFORE TOGGLE");
-    
+        
     // Initialize state if not exists
     if (keywordStates[keywordId] === undefined) {
         keywordStates[keywordId] = 0;
@@ -93,10 +79,7 @@ function toggleKeyword(button) {
             z-index: 100 !important;
         `;
     }
-    
-    // Debug after changes
-    debugButtonStyle(button, "AFTER TOGGLE");
-    
+        
     // Update prompts
     updatePrompts();
 }
