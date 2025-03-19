@@ -265,6 +265,318 @@ function updatePrompts() {
     });
 }
 
+// Add this code before initializeButtons function
+
+// Configuration system
+let keywordConfig = {};
+
+function createConfigPanel() {
+    // Check if panel already exists
+    if (document.getElementById('keyword-toggle-config')) return;
+    
+    // Find a good place to add our config - look for generation tab
+    const tabs = document.querySelectorAll('.tab-nav button');
+    let txtToImgTab = null;
+    
+    for (let tab of tabs) {
+        if (tab.textContent.includes('txt2img')) {
+            txtToImgTab = tab.parentNode.parentNode;
+            break;
+        }
+    }
+    
+    if (!txtToImgTab) {
+        console.log("Could not find txt2img tab to attach config panel");
+        return;
+    }
+    
+    // Create config panel elements
+    const configPanel = document.createElement('div');
+    configPanel.id = 'keyword-toggle-config';
+    configPanel.className = 'keyword-toggle-config-panel';
+    configPanel.style.cssText = 'margin: 10px 0; padding: 10px; border: 1px solid #555; border-radius: 4px;';
+    
+    const title = document.createElement('h3');
+    title.textContent = 'Keyword Toggle Configuration';
+    title.style.marginTop = '0';
+    
+    const instructions = document.createElement('p');
+    instructions.innerHTML = 'Enter keyword categories in this format: <br>"category": (keyword1, keyword2), "category2": (keyword3, keyword4)';
+    
+    const textarea = document.createElement('textarea');
+    textarea.id = 'keyword-toggle-config-input';
+    textarea.rows = 5;
+    textarea.style.width = '100%';
+    textarea.placeholder = '"nature": (river, mountain, tree, forest), "city": (street, building, car)';
+    
+    // Load saved config if exists
+    const savedConfig = localStorage.getItem('keyword-toggle-config');
+    if (savedConfig) {
+        textarea.value = savedConfig;
+    }
+    
+    const saveButton = document.createElement('button');
+    saveButton.textContent = 'Save & Apply Keywords';
+    saveButton.className = 'lg primary gradio-button';
+    saveButton.style.marginTop = '10px';
+    
+    // Add event listener for save button
+    saveButton.addEventListener('click', function() {
+        const configText = textarea.value;
+        localStorage.setItem('keyword-toggle-config', configText);
+        parseAndCreateKeywords(configText);
+    });
+    
+    // Assemble panel
+    configPanel.appendChild(title);
+    configPanel.appendChild(instructions);
+    configPanel.appendChild(textarea);
+    configPanel.appendChild(saveButton);
+    
+    // Add to page near the txt2img tab
+    txtToImgTab.parentNode.insertBefore(configPanel, txtToImgTab.nextSibling);
+    
+    // If we have saved config, parse it immediately
+    if (savedConfig) {
+        parseAndCreateKeywords(savedConfig);
+    }
+}
+
+function parseAndCreateKeywords(configText) {
+    try {
+        // Reset configuration
+        keywordConfig = {};
+        
+        // Parse the format: "category": (keyword1, keyword2), "category2": (keyword3, keyword4)
+        const categoryPattern = /"([^"]+)":\s*\(([^)]+)\)/g;
+        let match;
+        
+        while ((match = categoryPattern.exec(configText)) !== null) {
+            const category = match[1].trim();
+            const keywordsString = match[2].trim();
+            const keywords = keywordsString.split(',').map(k => k.trim()).filter(k => k);
+            
+            keywordConfig[category] = keywords;
+            console.log(`Parsed category "${category}" with keywords:`, keywords);
+        }
+        
+        // Now create buttons for these keywords
+        createKeywordButtons();
+        
+    } catch (e) {
+        console.error("Error parsing keyword configuration:", e);
+        alert("Error parsing configuration. Please check the format.");
+    }
+}
+
+function createKeywordButtons() {
+    // Find where to add buttons - look for the existing keyword toggle element if any
+    let targetElement = document.querySelector('#keyword-toggle-container');
+    
+    if (!targetElement) {
+        // Create container if it doesn't exist
+        targetElement = document.createElement('div');
+        targetElement.id = 'keyword-toggle-container';
+        targetElement.style.cssText = 'margin: 10px 0; padding: 10px; border: 1px solid #444; border-radius: 4px;';
+        
+        // Find prompts to add our container before
+        const positivePrompt = document.querySelector('textarea[placeholder*="Prompt"]:not([placeholder*="Negative"])');
+        if (positivePrompt && positivePrompt.parentNode) {
+            const promptContainer = positivePrompt.closest('div[id^="component-"]');
+            if (promptContainer) {
+                promptContainer.parentNode.insertBefore(targetElement, promptContainer);
+            }
+        }
+    }
+    
+    // Clear existing buttons for reconfiguration
+    targetElement.innerHTML = '';
+    
+    // Add category headers and keyword buttons
+    for (const category in keywordConfig) {
+        // Create category header
+        const categoryHeader = document.createElement('div');
+        categoryHeader.className = 'keyword-category';
+        categoryHeader.innerHTML = `<strong>${category}</strong>`;
+        categoryHeader.style.margin = '10px 0 5px 0';
+        targetElement.appendChild(categoryHeader);
+        
+        // Create button container for this category
+        const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'keyword-button-container';
+        buttonContainer.style.display = 'flex';
+        buttonContainer.style.flexWrap = 'wrap';
+        buttonContainer.style.gap = '5px';
+        targetElement.appendChild(buttonContainer);
+        
+        // Add keyword buttons
+        keywordConfig[category].forEach(keyword => {
+            // Create a unique ID for this keyword
+            const keywordId = `keyword_${keyword.replace(/\s+/g, '_').toLowerCase()}`;
+            
+            // Create button if it doesn't exist
+            let button = document.getElementById(keywordId);
+            if (!button) {
+                button = document.createElement('button');
+                button.id = keywordId;
+                button.textContent = keyword;
+                button.className = 'lg secondary gradio-button';
+                
+                // Initial styling
+                button.setAttribute("style", "background-color: #555555 !important; color: white !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
+                
+                // Add to container
+                buttonContainer.appendChild(button);
+                
+                // Add click handler
+                button.addEventListener('click', function() {
+                    toggleKeyword(this);
+                });
+                
+                // Mark as initialized
+                button.setAttribute('data-kw-initialized', 'true');
+                
+                // Track keyword
+                knownKeywords.add(keyword);
+            }
+        });
+    }
+}
+
+// Add this function to your code
+
+function createConfigTab() {
+    // Wait for the tab structure to be available
+    const tabNavElement = document.querySelector('.tab-nav');
+    if (!tabNavElement) {
+        console.log("Tab navigation not found, will retry");
+        setTimeout(createConfigTab, 1000);
+        return;
+    }
+
+    // Check if our tab already exists
+    if (document.getElementById('tab-keyword-toggle-config')) {
+        console.log("Keywords config tab already exists");
+        return;
+    }
+
+    console.log("Creating keywords config tab");
+    
+    // Create the tab button
+    const tabButton = document.createElement('button');
+    tabButton.id = 'tab-keyword-toggle-config-button';
+    tabButton.className = 'svelte-1ipelgc';
+    tabButton.textContent = 'Keywords';
+    
+    // Create tab content area
+    const tabContent = document.createElement('div');
+    tabContent.id = 'tab-keyword-toggle-config';
+    tabContent.className = 'tabitem svelte-1q1lx0';
+    tabContent.style.display = 'none';  // Initially hidden
+    
+    // Create panel content
+    const configPanel = document.createElement('div');
+    configPanel.id = 'keyword-toggle-config';
+    configPanel.className = 'keyword-toggle-config-panel';
+    configPanel.style.cssText = 'margin: 20px; padding: 20px; border: 1px solid #555; border-radius: 8px;';
+    
+    const title = document.createElement('h3');
+    title.textContent = 'Keyword Toggle Configuration';
+    title.style.marginTop = '0';
+    
+    const instructions = document.createElement('p');
+    instructions.innerHTML = 'Enter keyword categories in this format: <br>"category": (keyword1, keyword2), "category2": (keyword3, keyword4)<br>Or paste a complete JSON configuration';
+    
+    const textarea = document.createElement('textarea');
+    textarea.id = 'keyword-toggle-config-input';
+    textarea.rows = 10;
+    textarea.style.width = '100%';
+    textarea.placeholder = '"nature": (river, mountain, tree, forest), "city": (street, building, car)';
+    
+    // Load saved config or the default from keywords.json
+    const savedConfig = localStorage.getItem('keyword-toggle-config');
+    if (savedConfig) {
+        textarea.value = savedConfig;
+    } else {
+        // Try to load from keywords.json
+        fetch('/extensions/sd-keyword-toggle/keywords.json')
+            .then(response => response.json())
+            .then(data => {
+                // Convert the JSON to our format
+                let formattedConfig = '';
+                for (const category in data) {
+                    const keywords = data[category].join(', ');
+                    formattedConfig += `"${category}": (${keywords}), \n`;
+                }
+                textarea.value = formattedConfig.trim();
+                localStorage.setItem('keyword-toggle-config', formattedConfig);
+                parseAndCreateKeywords(formattedConfig);
+            })
+            .catch(err => {
+                console.error("Could not load keywords.json:", err);
+                textarea.value = '"Quality": (masterpiece, high quality, best quality), "Style": (anime, photorealistic, digital art)';
+            });
+    }
+    
+    const saveButton = document.createElement('button');
+    saveButton.textContent = 'Save & Apply Keywords';
+    saveButton.className = 'lg primary gradio-button';
+    saveButton.style.marginTop = '10px';
+    
+    // Add event listener for save button
+    saveButton.addEventListener('click', function() {
+        const configText = textarea.value;
+        localStorage.setItem('keyword-toggle-config', configText);
+        parseAndCreateKeywords(configText);
+    });
+    
+    // Assemble panel
+    configPanel.appendChild(title);
+    configPanel.appendChild(instructions);
+    configPanel.appendChild(textarea);
+    configPanel.appendChild(saveButton);
+    
+    // Add the panel to the tab content
+    tabContent.appendChild(configPanel);
+    
+    // Add the tab button to navigation
+    const liElement = document.createElement('li');
+    liElement.appendChild(tabButton);
+    tabNavElement.appendChild(liElement);
+    
+    // Add the tab content to the tab content area
+    const tabContentArea = tabNavElement.parentElement.querySelector('.tab-content');
+    if (tabContentArea) {
+        tabContentArea.appendChild(tabContent);
+    } else {
+        console.error("Could not find tab content area");
+    }
+    
+    // Add click handler for the tab
+    tabButton.addEventListener('click', function() {
+        // Hide all other tabs
+        document.querySelectorAll('.tabitem').forEach(tab => {
+            tab.style.display = 'none';
+        });
+        
+        // Deselect all tab buttons
+        document.querySelectorAll('.tab-nav button').forEach(btn => {
+            btn.classList.remove('selected');
+        });
+        
+        // Show our tab and select our button
+        tabContent.style.display = 'block';
+        tabButton.classList.add('selected');
+    });
+    
+    console.log("Keywords config tab created");
+    
+    // If we have saved config, parse it immediately
+    if (savedConfig) {
+        parseAndCreateKeywords(savedConfig);
+    }
+}
+
 // Initialize buttons
 function initializeButtons() {
     const buttons = document.querySelectorAll('[id^="keyword_"]');
@@ -300,11 +612,15 @@ function initializeButtons() {
 document.addEventListener('DOMContentLoaded', function() {
     addGlobalStyles();
     initializeButtons();
+    createConfigPanel();
+    createConfigTab();
 });
 
 window.addEventListener('load', function() {
     addGlobalStyles();
     initializeButtons();
+    createConfigPanel();
+    createConfigTab();
 });
 
 setInterval(function() {
