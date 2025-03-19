@@ -58,13 +58,14 @@ class KeywordToggleScript(scripts.Script):
                                 gr.Button(keyword, elem_id=f"keyword_{keyword.replace(' ', '_')}")
         return []
 
-# Add a script callback to expose keywords to JavaScript
+# Fix the API route function to accept the request parameter
+
 def on_app_started(demo, app):
     script = KeywordToggleScript()
     
-    # Add a route to get keywords
-    @app.route("/sd-keyword-toggle/get-keywords", methods=["GET"])
-    def get_keywords():
+    # Add a route to get keywords - Fix: add request parameter
+    @app.get("/sd-keyword-toggle/get-keywords")
+    def get_keywords(request):  # Added request parameter here
         try:
             return {"keywords": script.load_keywords()}
         except Exception as e:

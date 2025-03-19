@@ -432,87 +432,33 @@ async function loadKeywordsFromFiles() {
     return defaultKeywords;
 }
 
-// Replace your existing createKeywordButtons function with this version
+// Replace createKeywordButtons function with this version:
 
 async function createKeywordButtons() {
-    // Get keywords from files or JSON
+    // Load the keywords for tracking purposes
     const keywordData = await loadKeywordsFromFiles();
     
-    // Continue with your existing code but use keywordData instead of keywordConfig
-    // Find where to add buttons - look for the existing keyword toggle element if any
-    let targetElement = document.querySelector('#keyword-toggle-container');
-    
-    if (!targetElement) {
-        // Create container if it doesn't exist
-        targetElement = document.createElement('div');
-        targetElement.id = 'keyword-toggle-container';
-        targetElement.style.cssText = 'margin: 10px 0; padding: 10px; border: 1px solid #444; border-radius: 4px;';
-        
-        // Find prompts to add our container before
-        const positivePrompt = document.querySelector('textarea[placeholder*="Prompt"]:not([placeholder*="Negative"])');
-        if (positivePrompt && positivePrompt.parentNode) {
-            const promptContainer = positivePrompt.closest('div[id^="component-"]');
-            if (promptContainer) {
-                promptContainer.parentNode.insertBefore(targetElement, promptContainer);
-            }
-        }
-    }
-    
-    // Clear existing buttons for reconfiguration
-    targetElement.innerHTML = '';
-    
-    // Add category headers and keyword buttons
+    // We're not creating containers anymore, just tracking keywords
     for (const category in keywordData) {
-        // Create category header
-        const categoryHeader = document.createElement('div');
-        categoryHeader.className = 'keyword-category';
-        categoryHeader.innerHTML = `<strong>${category}</strong>`;
-        categoryHeader.style.margin = '10px 0 5px 0';
-        targetElement.appendChild(categoryHeader);
-        
-        // Create button container for this category
-        const buttonContainer = document.createElement('div');
-        buttonContainer.className = 'keyword-button-container';
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.flexWrap = 'wrap';
-        buttonContainer.style.gap = '5px';
-        targetElement.appendChild(buttonContainer);
-        
-        // Log number of buttons for debugging
-        console.log(`Found keyword buttons: ${keywordData[category].length}`);
-        
-        // Add keyword buttons
-        keywordData[category].forEach(keyword => {
-            // Create a unique ID for this keyword
-            const keywordId = `keyword_${keyword.replace(/\s+/g, '_').toLowerCase()}`;
-            
-            // Create button if it doesn't exist
-            let button = document.getElementById(keywordId);
-            if (!button) {
-                button = document.createElement('button');
-                button.id = keywordId;
-                button.textContent = keyword;
-                button.className = 'lg secondary gradio-button';
-                
-                // Initial styling
-                button.setAttribute("style", "background-color: #555555 !important; color: white !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
-                
-                // Add to container
-                buttonContainer.appendChild(button);
-                
-                // Add click handler
-                button.addEventListener('click', function() {
-                    toggleKeyword(this);
-                });
-                
-                // Mark as initialized
-                button.setAttribute('data-kw-initialized', 'true');
-                
-                // Track keyword
-                knownKeywords.add(keyword);
-            }
-        });
+        keywordData[category].forEach(keyword => knownKeywords.add(keyword));
     }
+    
+    // Find all existing keyword buttons created by Gradio
+    const buttons = document.querySelectorAll('[id^="keyword_"]');
+    console.log(`Found ${buttons.length} existing keyword buttons`);
+    
+    // Initialize the click handlers for these buttons
+    buttons.forEach(button => {
+        if (!button.hasAttribute('data-kw-initialized')) {
+            // Add click handler
+            button.addEventListener('click', function() {
+                toggleKeyword(this);
+            });
+            
+            // Mark as initialized
+            button.setAttribute('data-kw-initialized', 'true');
+        }
+    });
 }
 
 // Add this function to your code
