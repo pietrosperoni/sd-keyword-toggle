@@ -1,6 +1,10 @@
 # SD-Keyword-Toggle Extension
 
 A simple, file-based keyword toggle extension for AUTOMATIC1111's Stable Diffusion Web UI that adds clickable keyword management to your prompts.
+The keywords use the same structure than wildcards,
+so you can simply copy wildcards files and use them. 
+You can refer to for an explanation on them here: 
+https://github.com/mattjaybe/sd-wildcards
 
 ## Installation
 
