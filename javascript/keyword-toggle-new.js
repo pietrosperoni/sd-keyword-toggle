@@ -170,7 +170,7 @@ function addGlobalStyles() {
     console.log("Global styles added");
 }
 
-// Better approach to update prompts
+// Replace the updatePrompts function with this version that looks up by keyword text
 function updatePrompts() {
     console.log("Updating prompts");
     
@@ -178,7 +178,6 @@ function updatePrompts() {
     const allTextareas = document.querySelectorAll('textarea');
     
     // Try to get the positive and negative prompt textareas
-    // FIX: Fixed the syntax error in the selector
     let positivePrompt = document.querySelector('textarea[placeholder*="Prompt"]:not([placeholder*="Negative"])');
     let negativePrompt = document.querySelector('textarea[placeholder*="Negative"]');
     
@@ -205,20 +204,20 @@ function updatePrompts() {
     let newPositiveText = cleanUserText(basePositiveText);
     let newNegativeText = cleanUserText(baseNegativeText);
     
-    // Collect keywords based on state
+    // Collect keywords based on state - CHANGED TO USE KEYWORD AS KEY
     let posKeywords = [];
     let negKeywords = [];
     
-    for (const id in keywordStates) {
-        const btn = document.getElementById(id);
-        if (!btn) continue;
+    // Important change: Loop through keywordStates using keyword as key
+    for (const keyword in keywordStates) {
+        const state = keywordStates[keyword];
         
-        const word = btn.textContent.trim().replace(/^[+\-] /, '');
-        const state = keywordStates[id];
-        
-        if (state === 1) posKeywords.push(word);
-        else if (state === 2) negKeywords.push(word);
+        if (state === 1) posKeywords.push(keyword);
+        else if (state === 2) negKeywords.push(keyword);
     }
+    
+    console.log("Positive keywords:", posKeywords);
+    console.log("Negative keywords:", negKeywords);
     
     // Add positive keywords if any
     if (posKeywords.length > 0) {
