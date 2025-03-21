@@ -1,4 +1,3 @@
-
 // Keyword states: 0 = neutral, 1 = positive, 2 = negative
 const keywordStates = {};
 
@@ -14,19 +13,48 @@ function toggleKeyword(button) {
     const keywordId = button.id;
         
     // Initialize state if not exists
-    if (keywordStates[keywordId] === undefined) {
-        keywordStates[keywordId] = 0;
+    // Using keyword text as key instead of button ID to keep multiple instances in sync
+    if (keywordStates[keyword] === undefined) {
+        keywordStates[keyword] = 0;
     }
     
     // Toggle state: neutral -> positive -> negative -> neutral
-    keywordStates[keywordId] = (keywordStates[keywordId] + 1) % 3;
-    console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]}`);
+    keywordStates[keyword] = (keywordStates[keyword] + 1) % 3;
+    console.log(`Changed ${keyword} state to: ${keywordStates[keyword]}`);
     
-    // Store state in data attribute too (for inspection)
-    button.dataset.kwState = keywordStates[keywordId];
+    // Find all buttons with this same keyword across all tabs
+    const allMatchingButtons = findButtonsByKeyword(keyword);
+    console.log(`Found ${allMatchingButtons.length} instances of ${keyword}`);
     
+    // Update all matching buttons to maintain sync
+    allMatchingButtons.forEach(btn => {
+        // Store state in data attribute
+        btn.dataset.kwState = keywordStates[keyword];
+        
+        // Update appearance for each matching button
+        updateButtonAppearance(btn, keyword, keywordStates[keyword]);
+    });
+    
+    // Update prompts
+    updatePrompts();
+}
+
+// New helper function to find all buttons with the same keyword text
+function findButtonsByKeyword(keyword) {
+    // Search for all buttons that might contain this keyword
+    const allButtons = document.querySelectorAll('[id^="keyword_"]');
+    
+    // Filter to only buttons with matching text (ignoring +/- prefix)
+    return Array.from(allButtons).filter(btn => {
+        const btnKeyword = btn.textContent.trim().replace(/^[+\-] /, '');
+        return btnKeyword === keyword;
+    });
+}
+
+// Extract button appearance updating to a separate function
+function updateButtonAppearance(button, keyword, state) {
     // Update button appearance - add !important to all style properties
-    if (keywordStates[keywordId] === 1) { // positive - green
+    if (state === 1) { // positive - green
         button.textContent = "+ " + keyword;
         button.setAttribute("style", "");
         // Add !important to EVERYTHING and make foreground/background contrast high
@@ -45,7 +73,7 @@ function toggleKeyword(button) {
             position: relative !important;
             z-index: 100 !important;
         `;
-    } else if (keywordStates[keywordId] === 2) { // negative - red
+    } else if (state === 2) { // negative - red
         button.textContent = "- " + keyword;
         button.setAttribute("style", "");
         button.style.cssText = `
@@ -79,9 +107,6 @@ function toggleKeyword(button) {
             z-index: 100 !important;
         `;
     }
-        
-    // Update prompts
-    updatePrompts();
 }
 
 // Function to clean user text of any keywords
