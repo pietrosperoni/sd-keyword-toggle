@@ -2,9 +2,16 @@ import os
 from modules import script_callbacks
 
 def preload_resources():
-    # Only register the JavaScript file
-    js_path = os.path.join(os.path.dirname(__file__), "javascript", "keyword-toggle-new.js")
-    if os.path.exists(js_path):
-        script_callbacks.on_before_component(lambda: None, js=js_path)
+    # Register both JavaScript files in the correct order
+    js_files = [
+        os.path.join(os.path.dirname(__file__), "javascript", "prompt-handler.js"),
+        os.path.join(os.path.dirname(__file__), "javascript", "keyword-toggle-new.js")
+    ]
+    
+    for js_path in js_files:
+        if os.path.exists(js_path):
+            script_callbacks.on_before_component(lambda: None, js=js_path)
+        else:
+            print(f"Warning: JavaScript file not found: {js_path}")
 
 preload_resources()

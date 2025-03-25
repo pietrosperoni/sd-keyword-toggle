@@ -1,6 +1,7 @@
 import os
 import gradio as gr
 from modules import script_callbacks, scripts, shared
+from fastapi import FastAPI, Request
 
 # This may appear as an unresolved import error in IDEs, but it works correctly at runtime
 # because the WebUI adds its modules directory to Python's path when loading extensions
@@ -57,17 +58,21 @@ class KeywordToggleScript(scripts.Script):
 
 # Fix the API route function to accept the request parameter
 
-def on_app_started(demo, app):
+def on_app_started(demo, app: FastAPI):
     script = KeywordToggleScript()
     
     # Add a route to get keywords - Fix: add request parameter
     @app.get("/sd-keyword-toggle/get-keywords")
-    def get_keywords(request):  # Added request parameter here
+    def get_keywords():
         try:
-            return {"keywords": script.load_keywords()}
+            keywords = {
+                "Quality": ["masterpiece", "high quality", "best quality", "detailed"],
+                "Style": ["anime", "photorealistic", "digital art", "sketch", "painting"],
+                "Quality Negative": ["low quality", "bad quality", "sketchy", "unfinished", "sloppy", "messy"]
+            }
+            return {"keywords": keywords}
         except Exception as e:
-            print(f"Error loading keywords: {e}")
-            return {"error": str(e)}, 500
+            return {"error": str(e)}
 
-# Register the callback
+# Register the FastAPI handler
 script_callbacks.on_app_started(on_app_started)
