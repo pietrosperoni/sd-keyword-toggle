@@ -67,5 +67,30 @@ teenager
 ## Contributing
 Pull requests welcome!
 
-## License
+## Development Status
+⚠️ **Pre-Alpha Stage** - This extension is still under active development and may contain bugs.
+
+## Branch Information
+- **main**: Latest somewhat stable version (still pre-alpha)
+- **development**: Active development branch (expect frequent changes and bugs)
+- **deadend**: Archive of previous development attempts (for reference only)
+
+When installing, most users should use the **main** branch:
+```bash
+
+git clone https://github.com/pietrosperoni/sd-keyword-toggle
+
+
+Developers who want to contribute should work with the development branch:
+
+Version Tagging
+Future stable releases will follow semantic versioning:
+
+0.x.y: Pre-release development (current phase)
+1.0.0: First stable release
+Updates follow pattern: MAJOR.MINOR.PATCH
+MAJOR: Incompatible API changes
+MINOR: New features (backwards compatible)
+PATCH: Bug fixes (backwards compatible)
+License
 MIT License - see LICENSE file for details
