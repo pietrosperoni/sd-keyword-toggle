@@ -9,6 +9,7 @@ __pycache__/
 /keywords/*.txt
 !/keywords/default.txt
 !/keywords/example.txt
+/keywords/archive/*.txt
 
 # OS specific files
 .DS_Store
@@ -25,6 +26,8 @@ Thumbs.db
 *.swp
 *.swo
 *~
+todo.md
+commands.txt
 
 # Distribution / packaging
 dist/
