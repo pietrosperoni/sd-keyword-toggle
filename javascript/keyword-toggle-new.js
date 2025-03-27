@@ -1,18 +1,27 @@
+// Separate keyword states for txt2img and img2img
+const txt2imgKeywordStates = {};
+const img2imgKeywordStates = {}; 
 
-// Keyword states: 0 = neutral, 1 = positive, 2 = negative
-const keywordStates = {};
+// Separate base text for each interface
+let txt2imgBasePositiveText = "";
+let txt2imgBaseNegativeText = "";
+let img2imgBasePositiveText = "";
+let img2imgBaseNegativeText = "";
 
-// Store base prompt text (excluding keywords)
-let basePositiveText = "";
-let baseNegativeText = "";
-let hasInitialized = false;
-let knownKeywords = new Set(); // Track all keywords we know about
+let hasInitializedTxt2img = false;
+let hasInitializedImg2img = false;
+let knownKeywords = new Set(); // Still track all keywords
 
-// Function to toggle keyword state and update prompt
+// Modified toggle function to handle different contexts
 function toggleKeyword(button) {
-    const keyword = button.textContent.trim().replace(/^[+\-] /, ''); // Remove any prefix
+    // More precise context detection
+    const tabId = button.closest('#tab_img2img') ? "img2img" : "txt2img";
+    const isImg2img = tabId === "img2img";
+    
+    const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
+    const keyword = button.textContent.trim().replace(/^[+\-] /, '');
     const keywordId = button.id;
-        
+    
     // Initialize state if not exists
     if (keywordStates[keywordId] === undefined) {
         keywordStates[keywordId] = 0;
@@ -20,68 +29,31 @@ function toggleKeyword(button) {
     
     // Toggle state: neutral -> positive -> negative -> neutral
     keywordStates[keywordId] = (keywordStates[keywordId] + 1) % 3;
-    console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]}`);
+    console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]} in ${isImg2img ? 'img2img' : 'txt2img'}`);
     
-    // Store state in data attribute too (for inspection)
+    // Store state in data attribute
     button.dataset.kwState = keywordStates[keywordId];
     
-    // Update button appearance - add !important to all style properties
+    // Update button appearance - with more careful styling
     if (keywordStates[keywordId] === 1) { // positive - green
         button.textContent = "+ " + keyword;
-        button.setAttribute("style", "");
-        // Add !important to EVERYTHING and make foreground/background contrast high
-        button.style.cssText = `
-            background: #00ff00 !important;
-            color: black !important;
-            font-weight: 900 !important;
-            margin: 2px !important;
-            padding: 5px 10px !important;
-            border-radius: 4px !important;
-            cursor: pointer !important;
-            border: 5px solid lime !important;
-            box-shadow: 0 0 10px lime !important;
-            text-shadow: 1px 1px 0 white !important;
-            outline: none !important;
-            position: relative !important;
-            z-index: 100 !important;
-        `;
+        button.style.backgroundColor = "#00ff00";
+        button.style.color = "black";
+        button.style.fontWeight = "bold";
     } else if (keywordStates[keywordId] === 2) { // negative - red
         button.textContent = "- " + keyword;
-        button.setAttribute("style", "");
-        button.style.cssText = `
-            background: #ff0000 !important;
-            color: white !important;
-            font-weight: 900 !important;
-            margin: 2px !important;
-            padding: 5px 10px !important;
-            border-radius: 4px !important;
-            cursor: pointer !important;
-            border: 5px solid yellow !important;
-            box-shadow: 0 0 10px red !important;
-            text-shadow: 1px 1px 0 black !important;
-            outline: none !important;
-            position: relative !important;
-            z-index: 100 !important;
-        `;
+        button.style.backgroundColor = "#ff0000";
+        button.style.color = "white";
+        button.style.fontWeight = "bold";
     } else { // neutral - gray
         button.textContent = keyword;
-        button.setAttribute("style", "");
-        button.style.cssText = `
-            background: #555555 !important;
-            color: white !important;
-            margin: 2px !important;
-            padding: 5px 10px !important;
-            border-radius: 4px !important;
-            cursor: pointer !important;
-            border: none !important;
-            outline: none !important;
-            position: relative !important;
-            z-index: 100 !important;
-        `;
+        button.style.backgroundColor = "#555555";
+        button.style.color = "white";
+        button.style.fontWeight = "normal";
     }
-        
-    // Update prompts
-    updatePrompts();
+    
+    // Update prompts for the appropriate interface
+    updatePrompts(isImg2img);
 }
 
 // Function to clean user text of any keywords
@@ -145,55 +117,77 @@ function addGlobalStyles() {
     console.log("Global styles added");
 }
 
-// Better approach to update prompts
-function updatePrompts() {
-    console.log("Updating prompts");
+// Modified updatePrompts function to handle different contexts with more precise selectors
+function updatePrompts(isImg2img = false) {
+    console.log(`Updating prompts for ${isImg2img ? 'img2img' : 'txt2img'}`);
     
-    // Find prompt textareas
-    const allTextareas = document.querySelectorAll('textarea');
+    // More precise selectors for textareas
+    let positivePrompt, negativePrompt;
+    let basePositiveText, baseNegativeText;
+    let hasInitialized;
+    const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
     
-    // Try to get the positive and negative prompt textareas
-    // FIX: Fixed the syntax error in the selector
-    let positivePrompt = document.querySelector('textarea[placeholder*="Prompt"]:not([placeholder*="Negative"])');
-    let negativePrompt = document.querySelector('textarea[placeholder*="Negative"]');
-    
-    // Fallback to indices based on your specific setup
-    if (!positivePrompt && !negativePrompt && allTextareas.length >= 29) {
-        positivePrompt = allTextareas[27];
-        negativePrompt = allTextareas[28];
+    if (isImg2img) {
+        // More precise selectors for img2img textareas
+        positivePrompt = document.querySelector('#img2img_prompt textarea');
+        negativePrompt = document.querySelector('#img2img_neg_prompt textarea');
+        basePositiveText = img2imgBasePositiveText;
+        baseNegativeText = img2imgBaseNegativeText;
+        hasInitialized = hasInitializedImg2img;
+    } else {
+        // More precise selectors for txt2img textareas
+        positivePrompt = document.querySelector('#txt2img_prompt textarea');
+        negativePrompt = document.querySelector('#txt2img_neg_prompt textarea');
+        basePositiveText = txt2imgBasePositiveText;
+        baseNegativeText = txt2imgBaseNegativeText;
+        hasInitialized = hasInitializedTxt2img;
     }
     
     if (!positivePrompt || !negativePrompt) {
-        console.log("Could not find prompt textareas!");
+        console.log(`Could not find ${isImg2img ? 'img2img' : 'txt2img'} prompt textareas!`);
         return;
     }
     
     // Initialize base text the first time only, but clean it of known keywords
     if (!hasInitialized) {
-        basePositiveText = cleanUserText(positivePrompt.value || "");
-        baseNegativeText = cleanUserText(negativePrompt.value || "");
-        hasInitialized = true;
-        console.log("Initialized base text:", basePositiveText, baseNegativeText);
+        if (isImg2img) {
+            img2imgBasePositiveText = cleanUserText(positivePrompt.value || "");
+            img2imgBaseNegativeText = cleanUserText(negativePrompt.value || "");
+            hasInitializedImg2img = true;
+            basePositiveText = img2imgBasePositiveText;
+            baseNegativeText = img2imgBaseNegativeText;
+        } else {
+            txt2imgBasePositiveText = cleanUserText(positivePrompt.value || "");
+            txt2imgBaseNegativeText = cleanUserText(negativePrompt.value || "");
+            hasInitializedTxt2img = true;
+            basePositiveText = txt2imgBasePositiveText;
+            baseNegativeText = txt2imgBaseNegativeText;
+        }
+        console.log(`Initialized ${isImg2img ? 'img2img' : 'txt2img'} base text:`, basePositiveText, baseNegativeText);
     }
     
     // Always start from the cleaned base text
     let newPositiveText = cleanUserText(basePositiveText);
     let newNegativeText = cleanUserText(baseNegativeText);
     
-    // Collect keywords based on state
+    // Collect keywords based on state - only from the current interface's context
     let posKeywords = [];
     let negKeywords = [];
     
-    for (const id in keywordStates) {
-        const btn = document.getElementById(id);
-        if (!btn) continue;
+    // More specific selector for finding keywords in the proper tab context
+    const tabId = isImg2img ? "tab_img2img" : "tab_txt2img";
+    const contextButtons = document.querySelectorAll(`#${tabId} [id^="keyword_"]`);
+    
+    contextButtons.forEach(btn => {
+        const id = btn.id;
+        if (!keywordStates[id]) return;
         
         const word = btn.textContent.trim().replace(/^[+\-] /, '');
         const state = keywordStates[id];
         
         if (state === 1) posKeywords.push(word);
         else if (state === 2) negKeywords.push(word);
-    }
+    });
     
     // Add positive keywords if any
     if (posKeywords.length > 0) {
@@ -213,7 +207,7 @@ function updatePrompts() {
         newNegativeText += negKeywords.join(', ');
     }
     
-    console.log("Setting prompts to:", newPositiveText, newNegativeText);
+    console.log(`Setting ${isImg2img ? 'img2img' : 'txt2img'} prompts to:`, newPositiveText, newNegativeText);
     
     // Update the textareas
     try {
@@ -225,26 +219,36 @@ function updatePrompts() {
         positivePrompt.dispatchEvent(new Event('input', {bubbles: true}));
         negativePrompt.dispatchEvent(new Event('input', {bubbles: true}));
         
-        console.log("Textarea values updated");
+        console.log(`${isImg2img ? 'img2img' : 'txt2img'} Textarea values updated`);
     } catch (e) {
-        console.error("Error updating textareas:", e);
+        console.error(`Error updating ${isImg2img ? 'img2img' : 'txt2img'} textareas:`, e);
     }
     
-    // Allow updating base text when user edits
+    // Allow updating base text when user edits - with context awareness
     positivePrompt.addEventListener('input', function(e) {
         if (!e.isTrusted) return; // Skip events from our script
         
-        // Update base text to whatever the user types, but clean it of known keywords
-        basePositiveText = cleanUserText(this.value);
-        console.log("User updated positive text:", basePositiveText);
+        // Update the appropriate base text
+        if (isImg2img) {
+            img2imgBasePositiveText = cleanUserText(this.value);
+            console.log("User updated img2img positive text:", img2imgBasePositiveText);
+        } else {
+            txt2imgBasePositiveText = cleanUserText(this.value);
+            console.log("User updated txt2img positive text:", txt2imgBasePositiveText);
+        }
     });
     
     negativePrompt.addEventListener('input', function(e) {
         if (!e.isTrusted) return; // Skip events from our script
         
-        // Update base text to whatever the user types, but clean it of known keywords
-        baseNegativeText = cleanUserText(this.value);
-        console.log("User updated negative text:", baseNegativeText);
+        // Update the appropriate base text
+        if (isImg2img) {
+            img2imgBaseNegativeText = cleanUserText(this.value);
+            console.log("User updated img2img negative text:", img2imgBaseNegativeText);
+        } else {
+            txt2imgBaseNegativeText = cleanUserText(this.value);
+            console.log("User updated txt2img negative text:", txt2imgBaseNegativeText);
+        }
     });
 }
 
@@ -343,32 +347,38 @@ async function createKeywordButtons() {
     });
 }
 
-// Initialize buttons
+// Update initializeButtons with more precise selectors
 async function initializeButtons() {
-    // First try to create buttons from text files
-    await createKeywordButtons();
+    // First load keywords for tracking
+    await loadKeywordsFromFiles();
     
-    // Then initialize any existing buttons (from previous methods)
-    const buttons = document.querySelectorAll('[id^="keyword_"]');
-    console.log("Found keyword buttons:", buttons.length);
-    
-    buttons.forEach(button => {
-        if (!button.hasAttribute('data-kw-initialized')) {
-            // Add click handler
-            button.addEventListener('click', function() {
-                toggleKeyword(this);
-            });
-            
-            // Initial styling - ONLY for new buttons
-            button.setAttribute("style", "background-color: #555555 !important; color: white !important; margin: 2px; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block;");
-            
-            // Mark as initialized
-            button.setAttribute('data-kw-initialized', 'true');
-            
-            // Track this keyword
-            const keyword = button.textContent.trim();
-            knownKeywords.add(keyword);
-        }
+    // Then initialize buttons in each tab context separately
+    ["txt2img", "img2img"].forEach(context => {
+        const tabId = context === "img2img" ? "tab_img2img" : "tab_txt2img";
+        
+        // Find only the keyword buttons in the specific tab
+        const buttons = document.querySelectorAll(`#${tabId} [id^="keyword_"]`);
+        console.log(`Found ${buttons.length} ${context} keyword buttons`);
+        
+        buttons.forEach(button => {
+            if (!button.hasAttribute('data-kw-initialized')) {
+                // Add click handler
+                button.addEventListener('click', function() {
+                    toggleKeyword(this);
+                });
+                
+                // Very minimal initial styling - avoid disrupting the UI
+                button.style.margin = "2px";
+                button.style.cursor = "pointer";
+                
+                // Mark as initialized to avoid duplicate event handlers
+                button.setAttribute('data-kw-initialized', 'true');
+                
+                // Track this keyword
+                const keyword = button.textContent.trim();
+                knownKeywords.add(keyword);
+            }
+        });
     });
 }
 
