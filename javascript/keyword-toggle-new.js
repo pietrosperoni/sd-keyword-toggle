@@ -1,4 +1,4 @@
-// Separate keyword states for txt2img and img2img
+// Separate keyword states for txt2img and img2img - track by keyword TEXT not ID
 const txt2imgKeywordStates = {};
 const img2imgKeywordStates = {}; 
 
@@ -12,48 +12,102 @@ let hasInitializedTxt2img = false;
 let hasInitializedImg2img = false;
 let knownKeywords = new Set(); // Still track all keywords
 
-// Modified toggle function to handle different contexts
+// Modified toggle function to handle different contexts and update all buttons with same keyword
 function toggleKeyword(button) {
-    // More precise context detection
+    // Get context (txt2img or img2img)
     const tabId = button.closest('#tab_img2img') ? "img2img" : "txt2img";
     const isImg2img = tabId === "img2img";
     
+    // Use the appropriate state tracker
     const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
-    const keyword = button.textContent.trim().replace(/^[+\-] /, '');
-    const keywordId = button.id;
     
-    // Initialize state if not exists
-    if (keywordStates[keywordId] === undefined) {
-        keywordStates[keywordId] = 0;
+    // Get keyword text without any prefix
+    const keyword = button.textContent.trim().replace(/^[+\-] /, '');
+    
+    // Initialize state if not exists - TRACK BY KEYWORD TEXT instead of ID
+    if (keywordStates[keyword] === undefined) {
+        keywordStates[keyword] = 0;
     }
     
     // Toggle state: neutral -> positive -> negative -> neutral
-    keywordStates[keywordId] = (keywordStates[keywordId] + 1) % 3;
-    console.log(`Changed ${keyword} state to: ${keywordStates[keywordId]} in ${isImg2img ? 'img2img' : 'txt2img'}`);
+    keywordStates[keyword] = (keywordStates[keyword] + 1) % 3;
+    console.log(`Changed "${keyword}" state to: ${keywordStates[keyword]} in ${isImg2img ? 'img2img' : 'txt2img'}`);
     
-    // Store state in data attribute
-    button.dataset.kwState = keywordStates[keywordId];
+    // Find ALL buttons with the same keyword in this context
+    const contextSelector = isImg2img ? '#tab_img2img' : '#tab_txt2img';
+    const allMatchingButtons = document.querySelectorAll(`${contextSelector} [id^="keyword_"]`);
     
-    // Update button appearance - with more careful styling
-    if (keywordStates[keywordId] === 1) { // positive - green
-        button.textContent = "+ " + keyword;
-        button.style.backgroundColor = "#00ff00";
-        button.style.color = "black";
-        button.style.fontWeight = "bold";
-    } else if (keywordStates[keywordId] === 2) { // negative - red
-        button.textContent = "- " + keyword;
-        button.style.backgroundColor = "#ff0000";
-        button.style.color = "white";
-        button.style.fontWeight = "bold";
-    } else { // neutral - gray
-        button.textContent = keyword;
-        button.style.backgroundColor = "#555555";
-        button.style.color = "white";
-        button.style.fontWeight = "normal";
-    }
+    // Update ALL matching buttons
+    allMatchingButtons.forEach(btn => {
+        const btnKeyword = btn.textContent.trim().replace(/^[+\-] /, '');
+        if (btnKeyword === keyword) {
+            // Update this button's appearance
+            updateButtonAppearance(btn, keywordStates[keyword], keyword);
+        }
+    });
     
     // Update prompts for the appropriate interface
     updatePrompts(isImg2img);
+}
+
+// Helper function to update button appearance - updated with legacy styling
+function updateButtonAppearance(button, state, keyword) {
+    // Store state in data attribute
+    button.dataset.kwState = state;
+    
+    // Reset any existing styles
+    button.setAttribute("style", "");
+    
+    // Update appearance based on state - match legacy styling exactly
+    if (state === 1) { // positive - green
+        button.textContent = "+ " + keyword;
+        button.style.cssText = `
+            background: #00ff00 !important;
+            color: black !important;
+            font-weight: 900 !important;
+            margin: 2px !important;
+            padding: 5px 10px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            border: 5px solid lime !important;
+            box-shadow: 0 0 10px lime !important;
+            text-shadow: 1px 1px 0 white !important;
+            outline: none !important;
+            position: relative !important;
+            z-index: 100 !important;
+        `;
+    } else if (state === 2) { // negative - red
+        button.textContent = "- " + keyword;
+        button.style.cssText = `
+            background: #ff0000 !important;
+            color: white !important;
+            font-weight: 900 !important;
+            margin: 2px !important;
+            padding: 5px 10px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            border: 5px solid yellow !important;
+            box-shadow: 0 0 10px red !important;
+            text-shadow: 1px 1px 0 black !important;
+            outline: none !important;
+            position: relative !important;
+            z-index: 100 !important;
+        `;
+    } else { // neutral - gray
+        button.textContent = keyword;
+        button.style.cssText = `
+            background: #555555 !important;
+            color: white !important;
+            margin: 2px !important;
+            padding: 5px 10px !important;
+            border-radius: 4px !important;
+            cursor: pointer !important;
+            border: none !important;
+            outline: none !important;
+            position: relative !important;
+            z-index: 100 !important;
+        `;
+    }
 }
 
 // Function to clean user text of any keywords
@@ -95,20 +149,27 @@ function addGlobalStyles() {
     styleEl.textContent = `
         /* Force button styles based on data-kw-state attribute */
         [id^="keyword_"][data-kw-state="1"] {
-            background-color: #00aa44 !important;
-            color: white !important;
-            font-weight: bold !important;
+            background: #00ff00 !important;
+            color: black !important;
+            font-weight: 900 !important;
+            border: 5px solid lime !important;
+            box-shadow: 0 0 10px lime !important;
+            text-shadow: 1px 1px 0 white !important;
         }
         
         [id^="keyword_"][data-kw-state="2"] {
-            background-color: #aa0000 !important;
+            background: #ff0000 !important;
             color: white !important;
-            font-weight: bold !important;
+            font-weight: 900 !important;
+            border: 5px solid yellow !important;
+            box-shadow: 0 0 10px red !important;
+            text-shadow: 1px 1px 0 black !important;
         }
         
         [id^="keyword_"][data-kw-state="0"] {
-            background-color: #555555 !important;
+            background: #555555 !important;
             color: white !important;
+            border: none !important;
         }
     `;
     
@@ -117,7 +178,7 @@ function addGlobalStyles() {
     console.log("Global styles added");
 }
 
-// Modified updatePrompts function to handle different contexts with more precise selectors
+// Modified updatePrompts function with fixed variable declarations
 function updatePrompts(isImg2img = false) {
     console.log(`Updating prompts for ${isImg2img ? 'img2img' : 'txt2img'}`);
     
@@ -125,6 +186,7 @@ function updatePrompts(isImg2img = false) {
     let positivePrompt, negativePrompt;
     let basePositiveText, baseNegativeText;
     let hasInitialized;
+    // Only declare keywordStates once
     const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
     
     if (isImg2img) {
@@ -170,24 +232,17 @@ function updatePrompts(isImg2img = false) {
     let newPositiveText = cleanUserText(basePositiveText);
     let newNegativeText = cleanUserText(baseNegativeText);
     
-    // Collect keywords based on state - only from the current interface's context
+    // Collect keywords based on state - use the keywordStates object directly
     let posKeywords = [];
     let negKeywords = [];
     
-    // More specific selector for finding keywords in the proper tab context
-    const tabId = isImg2img ? "tab_img2img" : "tab_txt2img";
-    const contextButtons = document.querySelectorAll(`#${tabId} [id^="keyword_"]`);
-    
-    contextButtons.forEach(btn => {
-        const id = btn.id;
-        if (!keywordStates[id]) return;
+    // Process all keywords in the state object
+    for (const keyword in keywordStates) {
+        const state = keywordStates[keyword];
         
-        const word = btn.textContent.trim().replace(/^[+\-] /, '');
-        const state = keywordStates[id];
-        
-        if (state === 1) posKeywords.push(word);
-        else if (state === 2) negKeywords.push(word);
-    });
+        if (state === 1) posKeywords.push(keyword);
+        else if (state === 2) negKeywords.push(keyword);
+    }
     
     // Add positive keywords if any
     if (posKeywords.length > 0) {
@@ -347,7 +402,7 @@ async function createKeywordButtons() {
     });
 }
 
-// Update initializeButtons with more precise selectors
+// Update initializeButtons to check for existing states
 async function initializeButtons() {
     // First load keywords for tracking
     await loadKeywordsFromFiles();
@@ -355,6 +410,7 @@ async function initializeButtons() {
     // Then initialize buttons in each tab context separately
     ["txt2img", "img2img"].forEach(context => {
         const tabId = context === "img2img" ? "tab_img2img" : "tab_txt2img";
+        const keywordStates = context === "img2img" ? img2imgKeywordStates : txt2imgKeywordStates;
         
         // Find only the keyword buttons in the specific tab
         const buttons = document.querySelectorAll(`#${tabId} [id^="keyword_"]`);
@@ -377,6 +433,11 @@ async function initializeButtons() {
                 // Track this keyword
                 const keyword = button.textContent.trim();
                 knownKeywords.add(keyword);
+                
+                // Apply existing state if there is one
+                if (keywordStates[keyword] !== undefined) {
+                    updateButtonAppearance(button, keywordStates[keyword], keyword);
+                }
             }
         });
     });
