@@ -5,6 +5,9 @@ __pycache__/
 *.so
 .Python
 
+# extra directory - ignore all files in this directory
+/extra/*
+
 # Keywords directory - ignore user files but keep defaults
 /keywords/*.txt
 !/keywords/default.txt
