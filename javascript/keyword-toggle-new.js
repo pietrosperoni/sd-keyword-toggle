@@ -10,7 +10,8 @@ let img2imgBaseNegativeText = "";
 
 let hasInitializedTxt2img = false;
 let hasInitializedImg2img = false;
-let knownKeywords = new Set(); // Still track all keywords
+let knownKeywords = new Set(); // Will store prompt texts
+let buttonToPromptMap = {}; // Maps button text to prompt text
 
 // Modified toggle function to handle different contexts and update all buttons with same keyword
 function toggleKeyword(button) {
@@ -21,17 +22,20 @@ function toggleKeyword(button) {
     // Use the appropriate state tracker
     const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
     
-    // Get keyword text without any prefix
-    const keyword = button.textContent.trim().replace(/^[+\-] /, '');
+    // Get button text and find corresponding prompt text
+    const buttonText = button.textContent.trim().replace(/^[+\-] /, '');
+    const promptText = buttonToPromptMap[buttonText] || buttonText; // Fallback to buttonText if not in map
     
-    // Initialize state if not exists - TRACK BY KEYWORD TEXT instead of ID
+    // The keyword to be toggled is the prompt text
+    const keyword = promptText;
+    
+    // Initialize state if not exists - TRACK BY PROMPT TEXT
     if (keywordStates[keyword] === undefined) {
         keywordStates[keyword] = 0;
     }
     
     // Toggle state: neutral -> positive -> negative -> neutral
     keywordStates[keyword] = (keywordStates[keyword] + 1) % 3;
-    console.log(`Changed "${keyword}" state to: ${keywordStates[keyword]} in ${isImg2img ? 'img2img' : 'txt2img'}`);
     
     // Find ALL buttons with the same keyword in this context
     const contextSelector = isImg2img ? '#tab_img2img' : '#tab_txt2img';
@@ -40,9 +44,9 @@ function toggleKeyword(button) {
     // Update ALL matching buttons
     allMatchingButtons.forEach(btn => {
         const btnKeyword = btn.textContent.trim().replace(/^[+\-] /, '');
-        if (btnKeyword === keyword) {
+        if (btnKeyword === buttonText) { // Match by button text
             // Update this button's appearance
-            updateButtonAppearance(btn, keywordStates[keyword], keyword);
+            updateButtonAppearance(btn, keywordStates[keyword], buttonText); // Use buttonText for display
         }
     });
     
@@ -51,7 +55,7 @@ function toggleKeyword(button) {
 }
 
 // Helper function to update button appearance - updated with legacy styling
-function updateButtonAppearance(button, state, keyword) {
+function updateButtonAppearance(button, state, buttonText) {
     // Store state in data attribute
     button.dataset.kwState = state;
     
@@ -60,7 +64,7 @@ function updateButtonAppearance(button, state, keyword) {
     
     // Update appearance based on state - match legacy styling exactly
     if (state === 1) { // positive - green
-        button.textContent = "+ " + keyword;
+        button.textContent = "+ " + buttonText;
         button.style.cssText = `
             background: #00ff00 !important;
             color: black !important;
@@ -77,7 +81,7 @@ function updateButtonAppearance(button, state, keyword) {
             z-index: 100 !important;
         `;
     } else if (state === 2) { // negative - red
-        button.textContent = "- " + keyword;
+        button.textContent = "- " + buttonText;
         button.style.cssText = `
             background: #ff0000 !important;
             color: white !important;
@@ -94,7 +98,7 @@ function updateButtonAppearance(button, state, keyword) {
             z-index: 100 !important;
         `;
     } else { // neutral - gray
-        button.textContent = keyword;
+        button.textContent = buttonText;
         button.style.cssText = `
             background: #555555 !important;
             color: white !important;
@@ -115,15 +119,17 @@ function cleanUserText(text) {
     if (!text) return "";
     
     let cleanedText = text;
-    // Get all keywords from all buttons
-    const buttons = document.querySelectorAll('[id^="keyword_"]');
-    buttons.forEach(button => {
-        const keyword = button.textContent.trim().replace(/^[+\-] /, '');
-        knownKeywords.add(keyword);
-        
-        // Remove the keyword from user text (with comma handling)
-        const keywordPattern = new RegExp(`(^|,\\s*)${keyword}(\\s*,|$)`, 'gi');
-        cleanedText = cleanedText.replace(keywordPattern, '$1$2');
+
+    // Remove known keywords (which are prompt texts) from user text
+    knownKeywords.forEach(keyword => {
+        // Escape special characters in keyword for regex
+        const escapedKeyword = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const keywordPattern = new RegExp(`(^|,\\s*)${escapedKeyword}(\\s*,|$)`, 'gi');
+        cleanedText = cleanedText.replace(keywordPattern, (match, p1, p2) => {
+            // This preserves surrounding commas correctly
+            if (p1 && p2) return ", ";
+            return "";
+        });
         
         // Also handle case where it's the only text
         if (cleanedText.trim() === keyword) {
@@ -315,8 +321,9 @@ let keywordConfig = {};
 // Replace the loadKeywordsFromFiles function with this API-based version:
 
 async function loadKeywordsFromFiles() {
-    // Reset known keywords
+    // Reset known keywords and the map
     knownKeywords = new Set();
+    buttonToPromptMap = {};
     
     try {
         // Use the API to get keywords from the server
@@ -326,10 +333,20 @@ async function loadKeywordsFromFiles() {
             const data = await response.json();
             console.log("Successfully loaded keywords from server:", data);
             
-            // Add all keywords to the known keywords set
+            // Add all keywords to the known keywords set and populate map
             const keywordData = data.keywords;
             for (const category in keywordData) {
-                keywordData[category].forEach(keyword => knownKeywords.add(keyword));
+                keywordData[category].forEach(keywordObj => {
+                    // Handle both new object format and old string format for backwards compatibility
+                    if (typeof keywordObj === 'object' && keywordObj.prompt && keywordObj.button) {
+                        knownKeywords.add(keywordObj.prompt);
+                        buttonToPromptMap[keywordObj.button] = keywordObj.prompt;
+                    } else if (typeof keywordObj === 'string') {
+                        // This handles the case where the Python script hasn't been updated/reloaded
+                        knownKeywords.add(keywordObj);
+                        buttonToPromptMap[keywordObj] = keywordObj;
+                    }
+                });
             }
             
             return keywordData;
@@ -348,9 +365,15 @@ async function loadKeywordsFromFiles() {
         if (jsonResponse.ok) {
             const jsonData = await jsonResponse.json();
             
-            // Add all keywords to the known keywords set
+            // This fallback is assumed to have the old structure. We handle it gracefully.
             for (const category in jsonData) {
-                jsonData[category].forEach(keyword => knownKeywords.add(keyword));
+                jsonData[category].forEach(keyword => {
+                    if (typeof keyword === 'string') {
+                         knownKeywords.add(keyword);
+                         // Button and prompt text are the same
+                         buttonToPromptMap[keyword] = keyword;
+                    }
+                });
             }
             
             return jsonData;
@@ -367,7 +390,10 @@ async function loadKeywordsFromFiles() {
     };
     
     for (const category in defaultKeywords) {
-        defaultKeywords[category].forEach(keyword => knownKeywords.add(keyword));
+        defaultKeywords[category].forEach(keyword => {
+            knownKeywords.add(keyword);
+            buttonToPromptMap[keyword] = keyword; // Populate map for defaults
+        });
     }
     
     return defaultKeywords;
@@ -381,7 +407,13 @@ async function createKeywordButtons() {
     
     // We're not creating containers anymore, just tracking keywords
     for (const category in keywordData) {
-        keywordData[category].forEach(keyword => knownKeywords.add(keyword));
+        keywordData[category].forEach(keyword => {
+            if (typeof keyword === 'object' && keyword.prompt) {
+                knownKeywords.add(keyword.prompt);
+            } else if (typeof keyword === 'string') {
+                knownKeywords.add(keyword);
+            }
+        });
     }
     
     // Find all existing keyword buttons created by Gradio
@@ -431,12 +463,13 @@ async function initializeButtons() {
                 button.setAttribute('data-kw-initialized', 'true');
                 
                 // Track this keyword
-                const keyword = button.textContent.trim();
-                knownKeywords.add(keyword);
+                const buttonText = button.textContent.trim();
+                const promptText = buttonToPromptMap[buttonText] || buttonText;
+                knownKeywords.add(promptText);
                 
                 // Apply existing state if there is one
-                if (keywordStates[keyword] !== undefined) {
-                    updateButtonAppearance(button, keywordStates[keyword], keyword);
+                if (keywordStates[promptText] !== undefined) {
+                    updateButtonAppearance(button, keywordStates[promptText], buttonText);
                 }
             }
         });

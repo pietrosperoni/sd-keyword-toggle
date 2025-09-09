@@ -25,17 +25,34 @@ class KeywordToggleScript(scripts.Script):
                     
                     try:
                         with open(file_path, 'r', encoding='utf-8') as f:
-                            # Read lines and filter out empty lines and comments
-                            keywords[category_name] = [
+                            lines = [
                                 line.strip() for line in f.readlines()
                                 if line.strip() and not line.strip().startswith('//')
                             ]
+                            
+                            # Parse lines for the "Button Text: Prompt Text" format
+                            parsed_keywords = []
+                            for line in lines:
+                                if ": " in line:
+                                    parts = line.split(": ", 1)
+                                    button_text = parts[0].strip()
+                                    prompt_text = parts[1].strip()
+                                    parsed_keywords.append({"button": button_text, "prompt": prompt_text})
+                                else:
+                                    # If format is not used, button and prompt text are the same
+                                    parsed_keywords.append({"button": line, "prompt": line})
+                            keywords[category_name] = parsed_keywords
+
                     except Exception as e:
                         print(f"Error reading {file_path}: {e}")
         
         if not keywords:
             print("No keyword files found, using defaults")
-            return {"Example": ["keyword1", "keyword2"], "Quality": ["masterpiece", "best quality"]}
+            # Update default keywords to new structure
+            return {
+                "Example": [{"button": "keyword1", "prompt": "keyword1"}, {"button": "keyword2", "prompt": "keyword2"}],
+                "Quality": [{"button": "masterpiece", "prompt": "masterpiece"}, {"button": "best quality", "prompt": "best quality"}]
+            }
         
         return keywords
     
@@ -48,11 +65,12 @@ class KeywordToggleScript(scripts.Script):
     def ui(self, is_img2img):
         with gr.Accordion("Keyword Toggle", open=False):
             with gr.Tabs():
-                for category, keywords in self.keywords.items():
+                for category, keywords_list in self.keywords.items():
                     with gr.Tab(category):
                         with gr.Row():
-                            for keyword in keywords:
-                                gr.Button(keyword, elem_id=f"keyword_{keyword.replace(' ', '_')}")
+                            for keyword_obj in keywords_list:
+                                button_text = keyword_obj['button']
+                                gr.Button(button_text, elem_id=f"keyword_{button_text.replace(' ', '_')}")
         return []
 
 # Fix the API route function to accept the request parameter
@@ -60,9 +78,9 @@ class KeywordToggleScript(scripts.Script):
 def on_app_started(demo, app):
     script = KeywordToggleScript()
     
-    # Add a route to get keywords - Fix: add request parameter
+    # Add a route to get keywords
     @app.get("/sd-keyword-toggle/get-keywords")
-    def get_keywords(request):  # Added request parameter here
+    def get_keywords():
         try:
             return {"keywords": script.load_keywords()}
         except Exception as e:
