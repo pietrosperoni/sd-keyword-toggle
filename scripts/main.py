@@ -1,9 +1,23 @@
 import os
+import json
 import gradio as gr
 from modules import script_callbacks, scripts, shared
 
 # This may appear as an unresolved import error in IDEs, but it works correctly at runtime
 # because the WebUI adds its modules directory to Python's path when loading extensions
+#
+# ARCHITECTURE: Two-level randomization system for Dynamic Prompts
+#
+# Each keyword tab can be "free" or "bound":
+#   - FREE: keywords are individual elements in the global random pool
+#   - BOUND: all keywords in the tab become ONE element with {N$, $kw1|kw2|...} syntax
+#            and an optional prefix (e.g. "by " for artists)
+#
+# The global dice controls the outer pool: {globalN$, $elem1|elem2|...}
+# BREAK mode separates tab outputs with SD's BREAK token instead of commas.
+#
+# Settings are persisted in keywords/config.json via GET/POST /sd-keyword-toggle/config
+# UI controls (bound toggle, N, prefix) are rendered as raw HTML to avoid Gradio index shifting.
 
 class KeywordToggleScript(scripts.Script):
     def __init__(self):
@@ -59,9 +73,21 @@ class KeywordToggleScript(scripts.Script):
 
     def ui(self, is_img2img):
         with gr.Accordion("Keyword Toggle", open=False):
-            with gr.Row():
-                order_button = gr.Button("🎲", variant="tool", elem_id="kt_order_mode", scale=0)
-                gr.HTML('<button id="kt_new_category" class="lg secondary gradio-button svelte-cmf5ev" style="min-width: auto; max-width: 4em; padding: 5px 10px; cursor: pointer;">📁+</button>')
+            # Global controls row: dice with N input, BREAK toggle, new category button
+            # All utility buttons use raw HTML to avoid shifting Gradio component indices
+            gr.HTML('''
+                <div style="display:flex; gap:8px; align-items:center; padding:4px 0;">
+                    <button id="kt_order_mode" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; max-width:3em; padding:5px 10px; cursor:pointer;">🎲</button>
+                    <label style="font-size:12px; color:#aaa;">N:</label>
+                    <input type="number" id="kt_global_random_n" min="0" value="0"
+                        style="width:50px; padding:4px; background:#2a2a3e; color:#eee; border:1px solid #555; border-radius:4px; font-size:13px;" />
+                    <button id="kt_break_mode" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; padding:5px 10px; cursor:pointer;">BREAK</button>
+                    <button id="kt_new_category" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; max-width:4em; padding:5px 10px; cursor:pointer;">📁+</button>
+                </div>
+            ''')
 
             with gr.Group() as tabs_container:
                 self.render_keyword_tabs()
@@ -72,6 +98,27 @@ class KeywordToggleScript(scripts.Script):
         with gr.Tabs() as tabs:
             for category, keywords_list in self.keywords.items():
                 with gr.Tab(category):
+                    # Per-tab controls: bound/free toggle, random N, prefix
+                    # These are raw HTML inputs wired by JavaScript
+                    gr.HTML(f'''
+                        <div class="kt-tab-controls" data-category="{category}"
+                             style="display:flex; gap:8px; align-items:center; padding:4px 0; margin-bottom:4px;">
+                            <button id="kt_bound_{category}" class="kt-bound-toggle"
+                                style="min-width:auto; padding:3px 8px; cursor:pointer; background:#555; color:#aaa;
+                                       border:1px solid #666; border-radius:4px; font-size:12px;"
+                                title="Toggle: free (keywords are separate) / bound (keywords grouped as one element)">free</button>
+                            <label style="font-size:12px; color:#aaa;">N:</label>
+                            <input type="number" id="kt_randomN_{category}" min="0" value="0"
+                                style="width:50px; padding:3px; background:#2a2a3e; color:#eee; border:1px solid #555;
+                                       border-radius:4px; font-size:12px; display:none;"
+                                title="How many keywords to randomly pick (0 = all)" />
+                            <label class="kt-prefix-label" style="font-size:12px; color:#aaa; display:none;">Pfx:</label>
+                            <input type="text" id="kt_prefix_{category}" value="" placeholder="prefix..."
+                                style="width:100px; padding:3px; background:#2a2a3e; color:#eee; border:1px solid #555;
+                                       border-radius:4px; font-size:12px; display:none;"
+                                title="Text prepended to this tab\'s output (e.g. \'by \')" />
+                        </div>
+                    ''')
                     with gr.Row():
                         for keyword_obj in keywords_list:
                             button_text = keyword_obj['button']
@@ -243,6 +290,33 @@ def on_app_started(demo, app):
                 f.write(f"// Keywords for {safe_name}\n")
 
             return {"success": True, "category": safe_name}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # === Config persistence ===
+    # Stores per-tab settings (bound/free, randomN, prefix) and global settings
+    # (globalRandomN, useBreakSeparator) in a JSON file alongside the keyword files.
+
+    config_path = os.path.join(keywords_dir, "config.json")
+
+    @app.get("/sd-keyword-toggle/get-config")
+    def get_config():
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return {"globalRandomN": 0, "useBreakSeparator": False, "tabs": {}}
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            return {"globalRandomN": 0, "useBreakSeparator": False, "tabs": {}}
+
+    @app.post("/sd-keyword-toggle/save-config")
+    async def save_config(request: Request):
+        try:
+            body = await request.json()
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(body, f, indent=2, ensure_ascii=False)
+            return {"success": True}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 

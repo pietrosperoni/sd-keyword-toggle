@@ -1,4 +1,24 @@
 // === State Variables ===
+//
+// ARCHITECTURE OVERVIEW - Two-level randomization system:
+//
+// Each keyword tab can be in one of two modes:
+//   - FREE ("libero"): its active keywords become individual elements in the global pool
+//   - BOUND ("legato"): all active keywords in the tab are grouped into a single
+//     Dynamic Prompts expression {N$, $kw1|kw2|...} with an optional prefix.
+//     The entire expression becomes ONE element in the global pool.
+//
+// The global dice (🎲) controls the outer randomization:
+//   - globalRandomN = 0: elements are joined with ", " (or BREAK)
+//   - globalRandomN > 0: elements are wrapped in {globalN$, $elem1|elem2|...}
+//
+// Example with 2 bound tabs and 1 free tab:
+//   Tab "Artists" BOUND, N=3, prefix="by " → 1 element: "by {3$, $artist1|artist2|artist3}"
+//   Tab "Quality" FREE, keywords: masterpiece, detailed → 2 elements
+//   Tab "Background" BOUND, N=2, prefix="in " → 1 element: "in {2$, $forest|castle|clouds}"
+//   Global pool = 4 elements. With dice N=4:
+//   {4$, $by {3$, $artist1|artist2|artist3}|masterpiece|detailed|in {2$, $forest|castle|clouds}}
+//
 
 // Separate keyword states for txt2img and img2img - track by keyword TEXT not ID
 const txt2imgKeywordStates = {};
@@ -14,7 +34,24 @@ let hasInitializedTxt2img = false;
 let hasInitializedImg2img = false;
 let knownKeywords = new Set(); // Will store prompt texts
 let buttonToPromptMap = {}; // Maps button text to prompt text
-let orderMode = 'stable'; // 'stable' or 'random'
+
+// Per-tab settings: maps category name to {bound: bool, randomN: int, prefix: string}
+// - bound: if true, tab keywords are grouped as one element; if false, each keyword is separate
+// - randomN: for bound tabs, how many keywords to randomly pick (0 = all, stable order)
+// - prefix: text prepended to the tab's output (e.g. "by " for artists)
+let tabSettings = {};
+
+// Maps each prompt text back to its category, so updatePrompts() can group by tab
+let promptToCategoryMap = {};
+
+// Ordered list of category names, matching the visual tab order
+let categoryOrder = [];
+
+// Global dice: how many elements to pick from the global pool (0 = no global random)
+let globalRandomN = 0;
+
+// When true, tab outputs are separated by "\nBREAK\n" instead of ", "
+let useBreakSeparator = false;
 
 // === Core Functions ===
 
@@ -156,13 +193,33 @@ function addGlobalStyles() {
             border: none !important;
         }
 
-        /* Style for the order mode button */
+        /* Style for the order mode button (dice) */
         #kt_order_mode {
             transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out !important;
         }
         #kt_order_mode.random-mode {
             border-color: #34d399 !important;
             color: #34d399 !important;
+        }
+
+        /* BREAK toggle button */
+        #kt_break_mode {
+            transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out, background 0.2s ease-in-out !important;
+        }
+        #kt_break_mode.break-active {
+            border-color: #f59e0b !important;
+            color: #f59e0b !important;
+        }
+
+        /* Per-tab controls row */
+        .kt-tab-controls {
+            border-bottom: 1px solid #333;
+            padding-bottom: 4px;
+        }
+
+        .kt-bound-toggle {
+            transition: all 0.2s ease-in-out;
+            font-size: 12px;
         }
 
         /* Modal overlay */
@@ -347,50 +404,101 @@ function updatePrompts(isImg2img = false) {
     let newPositiveText = cleanUserText(basePositiveText);
     let newNegativeText = cleanUserText(baseNegativeText);
 
-    let posKeywords = [];
+    // --- Two-level prompt composition ---
+    //
+    // Step 1: Group positive keywords by category
+    // Step 2: For each category, build a "tab element":
+    //   - FREE tab: each keyword becomes a separate element in the global pool
+    //   - BOUND tab: all keywords become one grouped element with optional prefix and random N
+    // Step 3: Collect all elements into a global pool
+    // Step 4: Apply global random N (the dice) or join with separator
+    //
+    // Negative keywords always stay flat (no per-tab grouping, no random)
+
+    let posByCategory = {};  // category -> [promptText, ...]
     let negKeywords = [];
 
     for (const keyword in keywordStates) {
         const state = keywordStates[keyword];
-        if (state === 1) posKeywords.push(keyword);
-        else if (state === 2) negKeywords.push(keyword);
-    }
-
-    // Add positive keywords
-    if (posKeywords.length > 0) {
-        if (orderMode === 'random' && posKeywords.length > 1) {
-            // Dynamic Prompts with explicit ", " separator: {N$$, $$item1|item2|...}
-            const randomString = `{${posKeywords.length}$$, $$${posKeywords.join('|')}}`;
-            if (newPositiveText && newPositiveText.length > 0 &&
-                !newPositiveText.endsWith(' ') && !newPositiveText.endsWith(',')) {
-                newPositiveText += ', ';
-            }
-            newPositiveText += randomString;
-        } else {
-            if (newPositiveText && newPositiveText.length > 0 &&
-                !newPositiveText.endsWith(' ') && !newPositiveText.endsWith(',')) {
-                newPositiveText += ', ';
-            }
-            newPositiveText += posKeywords.join(', ');
+        if (state === 1) {
+            const cat = promptToCategoryMap[keyword] || '_uncategorized';
+            if (!posByCategory[cat]) posByCategory[cat] = [];
+            posByCategory[cat].push(keyword);
+        } else if (state === 2) {
+            negKeywords.push(keyword);
         }
     }
 
-    // Add negative keywords
+    // Build per-tab output and collect into global pool
+    // Uses categoryOrder to maintain consistent tab ordering
+    let globalPool = [];
+
+    for (const category of categoryOrder) {
+        const keywords = posByCategory[category];
+        if (!keywords || keywords.length === 0) continue;
+
+        const settings = tabSettings[category] || { bound: false, randomN: 0, prefix: '' };
+
+        if (settings.bound) {
+            // BOUND tab: group all keywords into one element
+            let tabStr;
+            if (settings.randomN > 0 && keywords.length > 1) {
+                // Random selection within the tab: {N$, $kw1|kw2|...}
+                const n = Math.min(settings.randomN, keywords.length);
+                tabStr = `{${n}$$, $$${keywords.join('|')}}`;
+            } else {
+                // All keywords, stable order
+                tabStr = keywords.join(', ');
+            }
+            // Prepend prefix if set (e.g. "by " -> "by {3$, $artist1|artist2}")
+            if (settings.prefix) {
+                tabStr = settings.prefix + tabStr;
+            }
+            globalPool.push(tabStr);
+        } else {
+            // FREE tab: each keyword is a separate element in the global pool
+            for (const kw of keywords) {
+                globalPool.push(kw);
+            }
+        }
+    }
+
+    // Handle uncategorized keywords (shouldn't happen normally, but safety net)
+    if (posByCategory['_uncategorized']) {
+        for (const kw of posByCategory['_uncategorized']) {
+            globalPool.push(kw);
+        }
+    }
+
+    // Build positive prompt string from the global pool
+    if (globalPool.length > 0) {
+        let keywordString;
+        if (globalRandomN > 0 && globalPool.length > 1) {
+            // Global dice active: wrap everything in {N$, $elem1|elem2|...}
+            const n = Math.min(globalRandomN, globalPool.length);
+            keywordString = `{${n}$$, $$${globalPool.join('|')}}`;
+        } else if (useBreakSeparator) {
+            // BREAK mode: separate tab outputs with BREAK
+            keywordString = globalPool.join('\nBREAK\n');
+        } else {
+            // Normal mode: comma-separated
+            keywordString = globalPool.join(', ');
+        }
+
+        if (newPositiveText && newPositiveText.length > 0 &&
+            !newPositiveText.endsWith(' ') && !newPositiveText.endsWith(',')) {
+            newPositiveText += ', ';
+        }
+        newPositiveText += keywordString;
+    }
+
+    // Negative keywords: always flat, comma-separated (no per-tab grouping)
     if (negKeywords.length > 0) {
-        if (orderMode === 'random' && negKeywords.length > 1) {
-            const randomString = `{${negKeywords.length}$$, $$${negKeywords.join('|')}}`;
-            if (newNegativeText && newNegativeText.length > 0 &&
-                !newNegativeText.endsWith(' ') && !newNegativeText.endsWith(',')) {
-                newNegativeText += ', ';
-            }
-            newNegativeText += randomString;
-        } else {
-            if (newNegativeText && newNegativeText.length > 0 &&
-                !newNegativeText.endsWith(' ') && !newNegativeText.endsWith(',')) {
-                newNegativeText += ', ';
-            }
-            newNegativeText += negKeywords.join(', ');
+        if (newNegativeText && newNegativeText.length > 0 &&
+            !newNegativeText.endsWith(' ') && !newNegativeText.endsWith(',')) {
+            newNegativeText += ', ';
         }
+        newNegativeText += negKeywords.join(', ');
     }
 
     console.log(`Setting ${isImg2img ? 'img2img' : 'txt2img'} prompts to:`, newPositiveText, newNegativeText);
@@ -429,6 +537,8 @@ function updatePrompts(isImg2img = false) {
 async function loadKeywordsFromFiles() {
     knownKeywords = new Set();
     buttonToPromptMap = {};
+    promptToCategoryMap = {};
+    categoryOrder = [];
 
     try {
         const response = await fetch('/sd-keyword-toggle/get-keywords');
@@ -439,13 +549,20 @@ async function loadKeywordsFromFiles() {
 
             const keywordData = data.keywords;
             for (const category in keywordData) {
+                categoryOrder.push(category);
+                // Initialize tabSettings for new categories (preserve existing settings)
+                if (!tabSettings[category]) {
+                    tabSettings[category] = { bound: false, randomN: 0, prefix: '' };
+                }
                 keywordData[category].forEach(keywordObj => {
                     if (typeof keywordObj === 'object' && keywordObj.prompt && keywordObj.button) {
                         knownKeywords.add(keywordObj.prompt);
                         buttonToPromptMap[keywordObj.button] = keywordObj.prompt;
+                        promptToCategoryMap[keywordObj.prompt] = category;
                     } else if (typeof keywordObj === 'string') {
                         knownKeywords.add(keywordObj);
                         buttonToPromptMap[keywordObj] = keywordObj;
+                        promptToCategoryMap[keywordObj] = category;
                     }
                 });
             }
@@ -532,6 +649,58 @@ async function apiCreateCategory(categoryName) {
         body: JSON.stringify({category_name: categoryName})
     });
     return await response.json();
+}
+
+// === Config Persistence ===
+// Loads and saves per-tab settings (bound/free, randomN, prefix) and global settings.
+// Config is stored server-side in keywords/config.json.
+
+async function loadConfig() {
+    try {
+        const response = await fetch('/sd-keyword-toggle/get-config');
+        if (response.ok) {
+            const config = await response.json();
+            globalRandomN = config.globalRandomN || 0;
+            useBreakSeparator = config.useBreakSeparator || false;
+            if (config.tabs) {
+                for (const category in config.tabs) {
+                    tabSettings[category] = {
+                        bound: config.tabs[category].bound || false,
+                        randomN: config.tabs[category].randomN || 0,
+                        prefix: config.tabs[category].prefix || ''
+                    };
+                }
+            }
+            console.log("Config loaded:", config);
+        }
+    } catch (e) {
+        console.error("Error loading config:", e);
+    }
+}
+
+let saveConfigTimeout = null;
+function saveConfigDebounced() {
+    if (saveConfigTimeout) clearTimeout(saveConfigTimeout);
+    saveConfigTimeout = setTimeout(async () => {
+        try {
+            const config = {
+                globalRandomN,
+                useBreakSeparator,
+                tabs: {}
+            };
+            for (const category in tabSettings) {
+                config.tabs[category] = { ...tabSettings[category] };
+            }
+            await fetch('/sd-keyword-toggle/save-config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(config)
+            });
+            console.log("Config saved");
+        } catch (e) {
+            console.error("Error saving config:", e);
+        }
+    }, 500);
 }
 
 // === Helper: find category from a button element ===
@@ -1120,41 +1289,246 @@ function setupNewCategoryButton() {
     }
 }
 
-// === Setup Order Mode Button ===
+// === Setup Global Dice Button + N Input ===
+// The dice button is now just a visual indicator / quick toggle.
+// The real control is the N input next to it: globalRandomN.
+// When N > 0, the global pool is wrapped in {N$, $elem1|elem2|...}.
 
-function setupOrderModeButton() {
-    const orderButton = document.querySelector('#kt_order_mode');
-    if (orderButton && !orderButton.hasAttribute('data-order-mode-initialized')) {
-        orderButton.addEventListener('click', () => {
-            orderMode = (orderMode === 'stable') ? 'random' : 'stable';
-            if (orderMode === 'random') {
-                orderButton.classList.add('random-mode');
-            } else {
-                orderButton.classList.remove('random-mode');
-            }
+function setupGlobalDiceControls() {
+    // N input
+    const nInputs = document.querySelectorAll('#kt_global_random_n');
+    nInputs.forEach(input => {
+        if (input.hasAttribute('data-kt-initialized')) return;
+        input.setAttribute('data-kt-initialized', 'true');
+        input.value = globalRandomN;
+        input.addEventListener('input', () => {
+            globalRandomN = parseInt(input.value) || 0;
+            // Sync all instances (txt2img and img2img have separate DOM)
+            document.querySelectorAll('#kt_global_random_n').forEach(i => {
+                if (i !== input) i.value = globalRandomN;
+            });
             updatePrompts(false);
             updatePrompts(true);
+            saveConfigDebounced();
         });
-        orderButton.setAttribute('data-order-mode-initialized', 'true');
-        console.log("SD Keyword Toggle: Order mode button initialized.");
+    });
+
+    // Dice button: click toggles N between 0 and the global pool size
+    const diceButtons = document.querySelectorAll('#kt_order_mode');
+    diceButtons.forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+        // Reflect current state
+        if (globalRandomN > 0) btn.classList.add('random-mode');
+
+        btn.addEventListener('click', () => {
+            if (globalRandomN > 0) {
+                globalRandomN = 0;
+            } else {
+                // Count current pool elements to set a sensible default
+                globalRandomN = countGlobalPoolElements();
+            }
+            // Update all N inputs and dice button styles
+            document.querySelectorAll('#kt_global_random_n').forEach(i => i.value = globalRandomN);
+            document.querySelectorAll('#kt_order_mode').forEach(b => {
+                if (globalRandomN > 0) b.classList.add('random-mode');
+                else b.classList.remove('random-mode');
+            });
+            updatePrompts(false);
+            updatePrompts(true);
+            saveConfigDebounced();
+        });
+    });
+}
+
+// Helper: count how many elements would be in the global pool right now
+function countGlobalPoolElements() {
+    let count = 0;
+    const keywordStates = txt2imgKeywordStates; // Use txt2img as reference
+    let posByCategory = {};
+    for (const keyword in keywordStates) {
+        if (keywordStates[keyword] === 1) {
+            const cat = promptToCategoryMap[keyword] || '_uncategorized';
+            if (!posByCategory[cat]) posByCategory[cat] = [];
+            posByCategory[cat].push(keyword);
+        }
     }
+    for (const category of categoryOrder) {
+        const keywords = posByCategory[category];
+        if (!keywords || keywords.length === 0) continue;
+        const settings = tabSettings[category] || { bound: false };
+        if (settings.bound) {
+            count += 1; // Bound tab = 1 element
+        } else {
+            count += keywords.length; // Free tab = N elements
+        }
+    }
+    if (posByCategory['_uncategorized']) count += posByCategory['_uncategorized'].length;
+    return count || 1;
+}
+
+// === Setup BREAK Toggle ===
+
+function setupBreakButton() {
+    const btns = document.querySelectorAll('#kt_break_mode');
+    btns.forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+        if (useBreakSeparator) btn.classList.add('break-active');
+
+        btn.addEventListener('click', () => {
+            useBreakSeparator = !useBreakSeparator;
+            document.querySelectorAll('#kt_break_mode').forEach(b => {
+                if (useBreakSeparator) b.classList.add('break-active');
+                else b.classList.remove('break-active');
+            });
+            updatePrompts(false);
+            updatePrompts(true);
+            saveConfigDebounced();
+        });
+    });
+}
+
+// === Setup Per-Tab Controls (bound/free toggle, N, prefix) ===
+// Each tab has HTML controls rendered by Python. This function wires them up.
+
+function setupTabControls() {
+    const controlRows = document.querySelectorAll('.kt-tab-controls');
+    controlRows.forEach(row => {
+        if (row.hasAttribute('data-kt-initialized')) return;
+        row.setAttribute('data-kt-initialized', 'true');
+
+        const category = row.dataset.category;
+        if (!category) return;
+
+        const settings = tabSettings[category] || { bound: false, randomN: 0, prefix: '' };
+        tabSettings[category] = settings;
+
+        const boundBtn = row.querySelector(`#kt_bound_${category}`);
+        const nInput = row.querySelector(`#kt_randomN_${category}`);
+        const prefixInput = row.querySelector(`#kt_prefix_${category}`);
+        const prefixLabel = row.querySelector('.kt-prefix-label');
+
+        // Apply saved state to UI
+        function updateControlVisibility() {
+            if (settings.bound) {
+                boundBtn.textContent = 'bound';
+                boundBtn.style.background = '#4a5568';
+                boundBtn.style.color = '#68d391';
+                boundBtn.style.borderColor = '#68d391';
+                if (nInput) nInput.style.display = '';
+                if (prefixInput) prefixInput.style.display = '';
+                if (prefixLabel) prefixLabel.style.display = '';
+            } else {
+                boundBtn.textContent = 'free';
+                boundBtn.style.background = '#555';
+                boundBtn.style.color = '#aaa';
+                boundBtn.style.borderColor = '#666';
+                if (nInput) nInput.style.display = 'none';
+                if (prefixInput) prefixInput.style.display = 'none';
+                if (prefixLabel) prefixLabel.style.display = 'none';
+            }
+        }
+
+        // Initialize from saved settings
+        if (nInput) nInput.value = settings.randomN;
+        if (prefixInput) prefixInput.value = settings.prefix;
+        updateControlVisibility();
+
+        // Bound/free toggle
+        if (boundBtn) {
+            boundBtn.addEventListener('click', () => {
+                settings.bound = !settings.bound;
+                updateControlVisibility();
+                // Sync all instances of this category's controls (txt2img/img2img)
+                syncTabControlsForCategory(category);
+                updatePrompts(false);
+                updatePrompts(true);
+                saveConfigDebounced();
+            });
+        }
+
+        // Random N input
+        if (nInput) {
+            nInput.addEventListener('input', () => {
+                settings.randomN = parseInt(nInput.value) || 0;
+                syncTabControlsForCategory(category);
+                updatePrompts(false);
+                updatePrompts(true);
+                saveConfigDebounced();
+            });
+        }
+
+        // Prefix input
+        if (prefixInput) {
+            prefixInput.addEventListener('input', () => {
+                settings.prefix = prefixInput.value;
+                syncTabControlsForCategory(category);
+                updatePrompts(false);
+                updatePrompts(true);
+                saveConfigDebounced();
+            });
+        }
+    });
+}
+
+// Sync per-tab control values across txt2img/img2img instances
+function syncTabControlsForCategory(category) {
+    const settings = tabSettings[category];
+    if (!settings) return;
+
+    document.querySelectorAll(`.kt-tab-controls[data-category="${category}"]`).forEach(row => {
+        const boundBtn = row.querySelector(`#kt_bound_${category}`);
+        const nInput = row.querySelector(`#kt_randomN_${category}`);
+        const prefixInput = row.querySelector(`#kt_prefix_${category}`);
+        const prefixLabel = row.querySelector('.kt-prefix-label');
+
+        if (boundBtn) {
+            if (settings.bound) {
+                boundBtn.textContent = 'bound';
+                boundBtn.style.background = '#4a5568';
+                boundBtn.style.color = '#68d391';
+                boundBtn.style.borderColor = '#68d391';
+            } else {
+                boundBtn.textContent = 'free';
+                boundBtn.style.background = '#555';
+                boundBtn.style.color = '#aaa';
+                boundBtn.style.borderColor = '#666';
+            }
+        }
+        if (nInput) {
+            nInput.value = settings.randomN;
+            nInput.style.display = settings.bound ? '' : 'none';
+        }
+        if (prefixInput) {
+            prefixInput.value = settings.prefix;
+            prefixInput.style.display = settings.bound ? '' : 'none';
+        }
+        if (prefixLabel) {
+            prefixLabel.style.display = settings.bound ? '' : 'none';
+        }
+    });
 }
 
 // === Initialization ===
 
 document.addEventListener('DOMContentLoaded', async function() {
     addGlobalStyles();
+    await loadConfig();
     await initializeButtons();
 });
 
 window.addEventListener('load', async function() {
     addGlobalStyles();
+    await loadConfig();
     await initializeButtons();
 });
 
 setInterval(async function() {
     await initializeButtons();
-    setupOrderModeButton();
+    setupGlobalDiceControls();
+    setupBreakButton();
+    setupTabControls();
     setupAddButtons();
     setupNewCategoryButton();
 }, 2000);

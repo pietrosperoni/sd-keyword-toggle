@@ -13,6 +13,7 @@ __pycache__/
 !/keywords/default.txt
 !/keywords/example.txt
 /keywords/archive/*.txt
+/keywords/config.json
 
 # OS specific files
 .DS_Store
