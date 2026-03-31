@@ -77,14 +77,14 @@ function toggleKeyword(button) {
         return;
     }
 
-    // Ensure nested structure exists
+    // State is keyed by buttonText (unique), not promptText
     if (!keywordStates[category]) keywordStates[category] = {};
-    if (keywordStates[category][promptText] === undefined) {
-        keywordStates[category][promptText] = 0;
+    if (keywordStates[category][buttonText] === undefined) {
+        keywordStates[category][buttonText] = 0;
     }
 
-    keywordStates[category][promptText] = (keywordStates[category][promptText] + 1) % 3;
-    const newState = keywordStates[category][promptText];
+    keywordStates[category][buttonText] = (keywordStates[category][buttonText] + 1) % 3;
+    const newState = keywordStates[category][buttonText];
 
     // Only update THIS button's appearance (not other buttons with the same text in other tabs)
     updateButtonAppearance(button, newState, buttonText);
@@ -483,17 +483,19 @@ function updatePrompts(isImg2img = false) {
     let posByCategory = {};  // category -> [promptText, ...]
     let negByCategory = {};  // category -> [promptText, ...]
 
-    // Iterate per-category nested state: keywordStates[category][promptText] = state
+    // Iterate per-category nested state: keywordStates[category][buttonText] = state
+    // Resolve buttonText → promptText via buttonToPromptMap for the actual prompt
     for (const category in keywordStates) {
         const catStates = keywordStates[category];
-        for (const keyword in catStates) {
-            const state = catStates[keyword];
+        for (const btnText in catStates) {
+            const state = catStates[btnText];
+            const promptText = buttonToPromptMap[btnText] || btnText;
             if (state === 1) {
                 if (!posByCategory[category]) posByCategory[category] = [];
-                posByCategory[category].push(keyword);
+                posByCategory[category].push(promptText);
             } else if (state === 2) {
                 if (!negByCategory[category]) negByCategory[category] = [];
-                negByCategory[category].push(keyword);
+                negByCategory[category].push(promptText);
             }
         }
     }
@@ -964,12 +966,12 @@ async function showEditKeywordModal(category, buttonElement, currentButtonText, 
                 knownKeywords.delete(currentPromptText);
                 delete buttonToPromptMap[currentButtonText];
 
-                // Remove from per-tab keyword states
-                if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][currentPromptText];
-                if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][currentPromptText];
+                // Remove from per-tab keyword states (keyed by buttonText)
+                if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][currentButtonText];
+                if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][currentButtonText];
 
-                // Remove button from DOM in both contexts
-                removeButtonFromDOM(currentButtonText);
+                // Remove button from DOM only in this category
+                removeButtonFromDOM(currentButtonText, category);
 
                 // Update prompts
                 updatePrompts(false);
@@ -1004,14 +1006,14 @@ async function showEditKeywordModal(category, buttonElement, currentButtonText, 
                 knownKeywords.add(promptText);
                 buttonToPromptMap[buttonText] = promptText;
 
-                // Transfer per-tab state from old prompt to new prompt
-                if (txt2imgKeywordStates[category] && txt2imgKeywordStates[category][currentPromptText] !== undefined) {
-                    txt2imgKeywordStates[category][promptText] = txt2imgKeywordStates[category][currentPromptText];
-                    delete txt2imgKeywordStates[category][currentPromptText];
+                // Transfer per-tab state from old buttonText to new buttonText
+                if (txt2imgKeywordStates[category] && txt2imgKeywordStates[category][currentButtonText] !== undefined) {
+                    txt2imgKeywordStates[category][buttonText] = txt2imgKeywordStates[category][currentButtonText];
+                    delete txt2imgKeywordStates[category][currentButtonText];
                 }
-                if (img2imgKeywordStates[category] && img2imgKeywordStates[category][currentPromptText] !== undefined) {
-                    img2imgKeywordStates[category][promptText] = img2imgKeywordStates[category][currentPromptText];
-                    delete img2imgKeywordStates[category][currentPromptText];
+                if (img2imgKeywordStates[category] && img2imgKeywordStates[category][currentButtonText] !== undefined) {
+                    img2imgKeywordStates[category][buttonText] = img2imgKeywordStates[category][currentButtonText];
+                    delete img2imgKeywordStates[category][currentButtonText];
                 }
 
                 // Update buttons in DOM
@@ -1112,9 +1114,9 @@ function showContextMenu(e, button) {
             if (response.success) {
                 knownKeywords.delete(promptText);
                 delete buttonToPromptMap[buttonText];
-                if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][promptText];
-                if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][promptText];
-                removeButtonFromDOM(buttonText);
+                if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][buttonText];
+                if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][buttonText];
+                removeButtonFromDOM(buttonText, category);
                 updatePrompts(false);
                 updatePrompts(true);
             } else {
@@ -1195,16 +1197,27 @@ function addButtonToDOM(category, buttonText, promptText) {
             showContextMenu(e, this);
         });
 
-        // Insert before the [...] button's wrapper (addBtn may be inside a Gradio HTML component)
-        const addBtnWrapper = addBtn.closest('.gradio-html') || addBtn.parentElement;
-        container.insertBefore(newBtn, addBtnWrapper);
+        // Insert before the [...] button. Walk up to find a direct child of container.
+        let insertTarget = addBtn;
+        while (insertTarget.parentElement && insertTarget.parentElement !== container) {
+            insertTarget = insertTarget.parentElement;
+        }
+        if (insertTarget.parentElement === container) {
+            container.insertBefore(newBtn, insertTarget);
+        } else {
+            // Fallback: append to end of container
+            container.appendChild(newBtn);
+        }
     });
 }
 
-function removeButtonFromDOM(buttonText) {
+function removeButtonFromDOM(buttonText, category) {
     const elemId = `keyword_${buttonText.replace(/ /g, '_')}`;
-    // Remove all instances (txt2img and img2img)
     document.querySelectorAll(`[id="${elemId}"]`).forEach(btn => {
+        if (category) {
+            const btnCategory = getCategoryForButton(btn);
+            if (btnCategory !== category) return;
+        }
         btn.remove();
     });
 }
@@ -1340,9 +1353,9 @@ async function initializeButtons() {
                 const category = getCategoryForButton(button);
                 knownKeywords.add(promptText);
 
-                // Restore button appearance from per-tab state
-                if (category && keywordStates[category] && keywordStates[category][promptText] !== undefined) {
-                    updateButtonAppearance(button, keywordStates[category][promptText], buttonText);
+                // Restore button appearance from per-tab state (keyed by buttonText)
+                if (category && keywordStates[category] && keywordStates[category][buttonText] !== undefined) {
+                    updateButtonAppearance(button, keywordStates[category][buttonText], buttonText);
                 }
             }
         });
@@ -1766,15 +1779,19 @@ function setupTabToggleAll() {
             ];
 
             // Use first context to determine current state
+            // Note: buttons that were never clicked have no state entry, treat as neutral (0)
             const catStates = txt2imgKeywordStates[category] || {};
             const values = Object.values(catStates);
             const allPositive = values.length > 0 && values.every(v => v === 1);
             const allNegative = values.length > 0 && values.every(v => v === 2);
+            const allNeutral = values.length === 0 || values.every(v => v === 0 || v === undefined);
 
+            // Cycle: neutral → positive → negative → neutral
             let newState;
-            if (allPositive) newState = 2;       // all positive → all negative
-            else if (allNegative) newState = 0;  // all negative → all neutral
-            else newState = 1;                    // mixed/neutral → all positive
+            if (allNeutral) newState = 1;
+            else if (allPositive) newState = 2;
+            else if (allNegative) newState = 0;
+            else newState = 1; // mixed → all positive
 
             // Apply to both contexts
             contexts.forEach(({ states, selector }) => {
@@ -1785,8 +1802,7 @@ function setupTabToggleAll() {
                     const bCategory = getCategoryForButton(b);
                     if (bCategory !== category) return;
                     const buttonText = b.textContent.trim().replace(/^[+\-] /, '');
-                    const promptText = buttonToPromptMap[buttonText] || buttonText;
-                    states[category][promptText] = newState;
+                    states[category][buttonText] = newState;
                     updateButtonAppearance(b, newState, buttonText);
                 });
             });
@@ -1822,7 +1838,8 @@ function setupCopyActive() {
                 item.textContent = cat;
                 item.addEventListener('click', async () => {
                     dropdown.remove();
-                    await copyActiveToCategory(category, cat);
+                    const isImg2img = btn.closest('#tab_img2img') !== null;
+                    await copyActiveToCategory(category, cat, isImg2img);
                 });
                 dropdown.appendChild(item);
             }
@@ -1847,35 +1864,112 @@ function setupCopyActive() {
     });
 }
 
-async function copyActiveToCategory(sourceCategory, destCategory) {
-    // Find all positive keywords in source tab (from txt2img state)
-    const catStates = txt2imgKeywordStates[sourceCategory] || {};
+// Find a unique button name for the destination tab.
+// If "Michelangelo" exists, returns "Michelangelo(2)", then "Michelangelo(3)", etc.
+function getUniqueButtonName(buttonText, destCategory) {
+    // Collect existing button names in destination tab
+    const existing = new Set();
+    document.querySelectorAll(`[id^="kt_add_${destCategory}"]`).forEach(addBtn => {
+        const container = addBtn.closest('.row, .flex, [class*="row"]') || addBtn.parentElement;
+        if (!container) return;
+        container.querySelectorAll('[id^="keyword_"]').forEach(btn => {
+            existing.add(btn.textContent.trim().replace(/^[+\-] /, ''));
+        });
+    });
+
+    if (!existing.has(buttonText)) return buttonText;
+
+    let n = 2;
+    while (existing.has(`${buttonText}(${n})`)) n++;
+    return `${buttonText}(${n})`;
+}
+
+async function copyActiveToCategory(sourceCategory, destCategory, isImg2img) {
+    // Find all positive keywords in source tab
+    const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
+    const catStates = keywordStates[sourceCategory] || {};
     let copied = 0;
 
-    for (const promptText in catStates) {
-        if (catStates[promptText] !== 1) continue; // Only positive (green)
+    for (const srcButtonText in catStates) {
+        if (catStates[srcButtonText] !== 1) continue; // Only positive (green)
 
-        // Find button text for this prompt
-        let buttonText = promptText;
-        for (const bt in buttonToPromptMap) {
-            if (buttonToPromptMap[bt] === promptText) { buttonText = bt; break; }
-        }
+        const promptText = buttonToPromptMap[srcButtonText] || srcButtonText;
+
+        // Get unique name for destination (adds (2), (3) etc. if needed)
+        const buttonText = getUniqueButtonName(srcButtonText, destCategory);
 
         try {
             const response = await apiAddKeyword(destCategory, buttonText, promptText);
             if (response.success) {
-                addButtonToDOM(destCategory, buttonText, promptText);
+                buttonToPromptMap[buttonText] = promptText;
+                try {
+                    addButtonToDOM(destCategory, buttonText, promptText);
+                } catch (domErr) {
+                    console.warn(`Button saved but DOM insert failed for "${buttonText}":`, domErr);
+                }
                 copied++;
             }
         } catch (e) {
             console.error(`Error copying "${buttonText}":`, e);
         }
     }
-    if (copied === 0) {
-        alert('No active (green) buttons to copy in this tab.');
+    if (copied > 0) {
+        console.log(`Copied ${copied} buttons from "${sourceCategory}" to "${destCategory}". Reload to see them.`);
     } else {
-        console.log(`Copied ${copied} buttons from "${sourceCategory}" to "${destCategory}"`);
+        alert('No active (green) buttons to copy in this tab.');
     }
+}
+
+// === Delete Active Buttons from Tab ===
+
+function setupDeleteActive() {
+    document.querySelectorAll('[id^="kt_delete_active_"]').forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+
+        const category = btn.id.replace('kt_delete_active_', '');
+
+        btn.addEventListener('click', async () => {
+            // Collect active (green) keywords in this tab
+            const isImg2img = btn.closest('#tab_img2img') !== null;
+            const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
+            const catStates = keywordStates[category] || {};
+            const activeKeywords = [];
+            for (const buttonText in catStates) {
+                if (catStates[buttonText] === 1) {
+                    const promptText = buttonToPromptMap[buttonText] || buttonText;
+                    activeKeywords.push({ buttonText, promptText });
+                }
+            }
+
+            if (activeKeywords.length === 0) {
+                alert('No active (green) buttons to delete in this tab.');
+                return;
+            }
+
+            const names = activeKeywords.map(k => k.buttonText).join(', ');
+            if (!confirm(`Delete ${activeKeywords.length} button(s) from "${category}" permanently?\n\n${names}`)) {
+                return;
+            }
+
+            for (const { buttonText, promptText } of activeKeywords) {
+                try {
+                    const response = await apiDeleteKeyword(category, buttonText);
+                    if (response.success) {
+                        knownKeywords.delete(promptText);
+                        delete buttonToPromptMap[buttonText];
+                        if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][buttonText];
+                        if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][buttonText];
+                        removeButtonFromDOM(buttonText, category);
+                    }
+                } catch (e) {
+                    console.error(`Error deleting "${buttonText}":`, e);
+                }
+            }
+            updatePrompts(false);
+            updatePrompts(true);
+        });
+    });
 }
 
 // === Initialization ===
@@ -1902,6 +1996,7 @@ setInterval(async function() {
     setupTabEnabled();
     setupTabToggleAll();
     setupCopyActive();
+    setupDeleteActive();
     setupAddButtons();
     setupNewCategoryButton();
 }, 2000);
