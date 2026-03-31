@@ -119,10 +119,10 @@ class KeywordToggleScript(scripts.Script):
                                 style="min-width:auto; padding:1px 5px; cursor:pointer; background:#444; color:#aaa;
                                        border:1px solid #555; border-radius:3px; font-size:10px;"
                                 title="Cycle all: neutral → positive → negative → neutral">⊕</button>
-                            <button id="kt_select_mode_{category}" class="kt-small-btn"
+                            <button id="kt_copy_active_{category}" class="kt-small-btn"
                                 style="min-width:auto; padding:1px 5px; cursor:pointer; background:#444; color:#aaa;
                                        border:1px solid #555; border-radius:3px; font-size:10px;"
-                                title="Select buttons to copy to another tab">✂</button>
+                                title="Copy active (green) buttons to another tab">📋</button>
                             <span style="font-size:11px; color:#6f6;">+</span>
                             <button id="kt_bound_{category}" class="kt-bound-toggle"
                                 style="min-width:auto; padding:2px 6px; cursor:pointer; background:#555; color:#aaa;

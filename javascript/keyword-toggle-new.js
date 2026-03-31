@@ -64,12 +64,6 @@ let keywordToggleEnabled = true;
 // === Core Functions ===
 
 function toggleKeyword(button) {
-    // In select mode, toggle selection instead of keyword state
-    if (isInSelectMode(button)) {
-        toggleButtonSelection(button);
-        return;
-    }
-
     const tabId = button.closest('#tab_img2img') ? "img2img" : "txt2img";
     const isImg2img = tabId === "img2img";
     const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
@@ -262,19 +256,6 @@ function addGlobalStyles() {
 
         .kt-bound-fields {
             display: none;
-        }
-
-        /* Select mode: selected buttons get blue border */
-        [id^="keyword_"].kt-selected {
-            outline: 3px solid #60a5fa !important;
-            outline-offset: -1px;
-        }
-
-        /* Select mode active indicator */
-        .kt-small-btn.select-active {
-            background: #2563eb !important;
-            color: white !important;
-            border-color: #60a5fa !important;
         }
 
         /* Copy-to dropdown */
@@ -1811,123 +1792,70 @@ function setupTabToggleAll() {
     });
 }
 
-// === Select Mode: bulk copy buttons between tabs ===
-// When select mode is active for a tab, clicking buttons selects/deselects them
-// (blue outline) instead of toggling keyword state. A "Copy to..." dropdown lets
-// the user choose a destination tab.
+// === Copy Active Buttons to Another Tab ===
+// Click 📋 → dropdown of tabs → copies all positive (green) buttons from this tab to chosen tab.
+// Uses the existing keyword selection (state=1) as the "selection" — no separate select mode needed.
 
-let selectModeCategory = null; // null = no select mode, or category name
-let selectedButtons = new Set(); // Set of button texts currently selected
-
-function setupSelectMode() {
-    document.querySelectorAll('[id^="kt_select_mode_"]').forEach(btn => {
+function setupCopyActive() {
+    document.querySelectorAll('[id^="kt_copy_active_"]').forEach(btn => {
         if (btn.hasAttribute('data-kt-initialized')) return;
         btn.setAttribute('data-kt-initialized', 'true');
 
-        const category = btn.id.replace('kt_select_mode_', '');
+        const category = btn.id.replace('kt_copy_active_', '');
 
-        btn.addEventListener('click', (e) => {
-            if (selectModeCategory === category) {
-                // Deactivate select mode
-                exitSelectMode();
-            } else {
-                // Activate select mode for this category
-                exitSelectMode(); // exit any previous
-                selectModeCategory = category;
-                selectedButtons.clear();
-                btn.classList.add('select-active');
+        btn.addEventListener('click', () => {
+            // Close any existing dropdown
+            document.querySelectorAll('.kt-copy-dropdown').forEach(d => d.remove());
 
-                // Show copy dropdown on second click or show it immediately
-                showCopyDropdown(btn, category);
+            const dropdown = document.createElement('div');
+            dropdown.className = 'kt-copy-dropdown';
+
+            for (const cat of categoryOrder) {
+                if (cat === category) continue;
+                const item = document.createElement('div');
+                item.className = 'kt-copy-dropdown-item';
+                item.textContent = cat;
+                item.addEventListener('click', async () => {
+                    dropdown.remove();
+                    await copyActiveToCategory(category, cat);
+                });
+                dropdown.appendChild(item);
             }
+
+            // Position below the button
+            const rect = btn.getBoundingClientRect();
+            dropdown.style.position = 'fixed';
+            dropdown.style.left = rect.left + 'px';
+            dropdown.style.top = (rect.bottom + 4) + 'px';
+            document.body.appendChild(dropdown);
+
+            // Close on click outside
+            setTimeout(() => {
+                document.addEventListener('click', function onClickAway(e) {
+                    if (!dropdown.contains(e.target) && e.target !== btn) {
+                        dropdown.remove();
+                        document.removeEventListener('click', onClickAway);
+                    }
+                });
+            }, 0);
         });
     });
 }
 
-function exitSelectMode() {
-    if (!selectModeCategory) return;
-    // Remove selection highlights
-    document.querySelectorAll('[id^="keyword_"].kt-selected').forEach(b => {
-        b.classList.remove('kt-selected');
-    });
-    // Remove active styling from select buttons
-    document.querySelectorAll('[id^="kt_select_mode_"]').forEach(b => {
-        b.classList.remove('select-active');
-    });
-    // Remove any open dropdown
-    document.querySelectorAll('.kt-copy-dropdown').forEach(d => d.remove());
-    selectModeCategory = null;
-    selectedButtons.clear();
-}
-
-function isInSelectMode(button) {
-    if (!selectModeCategory) return false;
-    const cat = getCategoryForButton(button);
-    return cat === selectModeCategory;
-}
-
-function toggleButtonSelection(button) {
-    const buttonText = button.textContent.trim().replace(/^[+\-] /, '');
-    if (selectedButtons.has(buttonText)) {
-        selectedButtons.delete(buttonText);
-        button.classList.remove('kt-selected');
-    } else {
-        selectedButtons.add(buttonText);
-        button.classList.add('kt-selected');
-    }
-}
-
-function showCopyDropdown(anchorBtn, sourceCategory) {
-    // Remove existing dropdown
-    document.querySelectorAll('.kt-copy-dropdown').forEach(d => d.remove());
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'kt-copy-dropdown';
-
-    // Header
-    const header = document.createElement('div');
-    header.style.cssText = 'padding:6px 14px; color:#888; font-size:11px; border-bottom:1px solid #333;';
-    header.textContent = 'Select buttons, then copy to:';
-    dropdown.appendChild(header);
-
-    // One item per category (except source)
-    for (const cat of categoryOrder) {
-        if (cat === sourceCategory) continue;
-        const item = document.createElement('div');
-        item.className = 'kt-copy-dropdown-item';
-        item.textContent = cat;
-        item.addEventListener('click', async () => {
-            await copySelectedToCategory(sourceCategory, cat);
-            exitSelectMode();
-        });
-        dropdown.appendChild(item);
-    }
-
-    // Cancel item
-    const cancel = document.createElement('div');
-    cancel.className = 'kt-copy-dropdown-item';
-    cancel.style.color = '#888';
-    cancel.textContent = 'Cancel';
-    cancel.addEventListener('click', () => exitSelectMode());
-    dropdown.appendChild(cancel);
-
-    // Position near the anchor button
-    const rect = anchorBtn.getBoundingClientRect();
-    dropdown.style.position = 'fixed';
-    dropdown.style.left = rect.left + 'px';
-    dropdown.style.top = (rect.bottom + 4) + 'px';
-    document.body.appendChild(dropdown);
-}
-
-async function copySelectedToCategory(sourceCategory, destCategory) {
-    if (selectedButtons.size === 0) {
-        alert('No buttons selected. Click buttons to select them first.');
-        return;
-    }
-
+async function copyActiveToCategory(sourceCategory, destCategory) {
+    // Find all positive keywords in source tab (from txt2img state)
+    const catStates = txt2imgKeywordStates[sourceCategory] || {};
     let copied = 0;
-    for (const buttonText of selectedButtons) {
-        const promptText = buttonToPromptMap[buttonText] || buttonText;
+
+    for (const promptText in catStates) {
+        if (catStates[promptText] !== 1) continue; // Only positive (green)
+
+        // Find button text for this prompt
+        let buttonText = promptText;
+        for (const bt in buttonToPromptMap) {
+            if (buttonToPromptMap[bt] === promptText) { buttonText = bt; break; }
+        }
+
         try {
             const response = await apiAddKeyword(destCategory, buttonText, promptText);
             if (response.success) {
@@ -1938,7 +1866,11 @@ async function copySelectedToCategory(sourceCategory, destCategory) {
             console.error(`Error copying "${buttonText}":`, e);
         }
     }
-    console.log(`Copied ${copied} buttons from "${sourceCategory}" to "${destCategory}"`);
+    if (copied === 0) {
+        alert('No active (green) buttons to copy in this tab.');
+    } else {
+        console.log(`Copied ${copied} buttons from "${sourceCategory}" to "${destCategory}"`);
+    }
 }
 
 // === Initialization ===
@@ -1964,7 +1896,7 @@ setInterval(async function() {
     setupTabControls();
     setupTabEnabled();
     setupTabToggleAll();
-    setupSelectMode();
+    setupCopyActive();
     setupAddButtons();
     setupNewCategoryButton();
 }, 2000);
