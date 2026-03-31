@@ -76,14 +76,23 @@ class KeywordToggleScript(scripts.Script):
             # Global controls row: dice with N input, BREAK toggle, new category button
             # All utility buttons use raw HTML to avoid shifting Gradio component indices
             gr.HTML('''
-                <div style="display:flex; gap:8px; align-items:center; padding:4px 0;">
+                <div class="kt-global-controls" style="display:flex; gap:8px; align-items:center; padding:4px 0; flex-wrap:wrap;">
+                    <span class="kt-checkbox-wrap" title="Enable/disable keyword injection into prompt">
+                        <input type="checkbox" id="kt_master_toggle" checked /> <span class="kt-master-label" style="font-size:12px; color:#aaa;">ON</span>
+                    </span>
                     <button id="kt_order_mode" class="lg secondary gradio-button svelte-cmf5ev"
                         style="min-width:auto; max-width:3em; padding:5px 10px; cursor:pointer;">🎲</button>
-                    <label style="font-size:12px; color:#aaa;">N:</label>
+                    <span style="font-size:12px; color:#aaa;">N:</span>
                     <input type="number" id="kt_global_random_n" min="0" value="0"
                         style="width:50px; padding:4px; background:#2a2a3e; color:#eee; border:1px solid #555; border-radius:4px; font-size:13px;" />
+                    <span id="kt_global_count" style="font-size:12px; color:#888;">/ 0</span>
+                    <span class="kt-checkbox-wrap" title="Auto N=M (shuffle all)">
+                        <input type="checkbox" id="kt_global_useAll" /> <span style="font-size:11px; color:#aaa;">all</span>
+                    </span>
                     <button id="kt_break_mode" class="lg secondary gradio-button svelte-cmf5ev"
                         style="min-width:auto; padding:5px 10px; cursor:pointer;">BREAK</button>
+                    <button id="kt_reset_all" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; padding:5px 10px; cursor:pointer;" title="Reset all keywords to neutral">🔄</button>
                     <button id="kt_new_category" class="lg secondary gradio-button svelte-cmf5ev"
                         style="min-width:auto; max-width:4em; padding:5px 10px; cursor:pointer;">📁+</button>
                 </div>
@@ -98,25 +107,59 @@ class KeywordToggleScript(scripts.Script):
         with gr.Tabs() as tabs:
             for category, keywords_list in self.keywords.items():
                 with gr.Tab(category):
-                    # Per-tab controls: bound/free toggle, random N, prefix
-                    # These are raw HTML inputs wired by JavaScript
+                    # Per-tab controls: positive row + negative row
+                    # Raw HTML inputs wired by JavaScript. Two rows: one for positive, one for negative.
                     gr.HTML(f'''
-                        <div class="kt-tab-controls" data-category="{category}"
-                             style="display:flex; gap:8px; align-items:center; padding:4px 0; margin-bottom:4px;">
+                        <div class="kt-tab-controls" data-category="{category}" data-polarity="pos"
+                             style="display:flex; gap:6px; align-items:center; padding:2px 0; flex-wrap:wrap;">
+                            <span class="kt-checkbox-wrap" title="Enable/disable this tab">
+                                <input type="checkbox" id="kt_tab_enabled_{category}" checked />
+                            </span>
+                            <button id="kt_tab_toggle_all_{category}" class="kt-small-btn"
+                                style="min-width:auto; padding:1px 5px; cursor:pointer; background:#444; color:#aaa;
+                                       border:1px solid #555; border-radius:3px; font-size:10px;"
+                                title="Cycle all: neutral → positive → negative → neutral">⊕</button>
+                            <span style="font-size:11px; color:#6f6;">+</span>
                             <button id="kt_bound_{category}" class="kt-bound-toggle"
-                                style="min-width:auto; padding:3px 8px; cursor:pointer; background:#555; color:#aaa;
-                                       border:1px solid #666; border-radius:4px; font-size:12px;"
-                                title="Toggle: free (keywords are separate) / bound (keywords grouped as one element)">free</button>
-                            <label style="font-size:12px; color:#aaa;">N:</label>
-                            <input type="number" id="kt_randomN_{category}" min="0" value="0"
-                                style="width:50px; padding:3px; background:#2a2a3e; color:#eee; border:1px solid #555;
-                                       border-radius:4px; font-size:12px; display:none;"
-                                title="How many keywords to randomly pick (0 = all)" />
-                            <label class="kt-prefix-label" style="font-size:12px; color:#aaa; display:none;">Pfx:</label>
-                            <input type="text" id="kt_prefix_{category}" value="" placeholder="prefix..."
-                                style="width:100px; padding:3px; background:#2a2a3e; color:#eee; border:1px solid #555;
-                                       border-radius:4px; font-size:12px; display:none;"
-                                title="Text prepended to this tab\'s output (e.g. \'by \')" />
+                                style="min-width:auto; padding:2px 6px; cursor:pointer; background:#555; color:#aaa;
+                                       border:1px solid #666; border-radius:4px; font-size:11px;"
+                                title="Toggle: free / bound">free</button>
+                            <span class="kt-bound-fields" style="display:none; gap:6px; align-items:center;">
+                                <span style="font-size:11px; color:#aaa;">N:</span>
+                                <input type="number" id="kt_randomN_{category}" min="0" value="0"
+                                    style="width:45px; padding:2px; background:#2a2a3e; color:#eee; border:1px solid #555;
+                                           border-radius:4px; font-size:11px;" />
+                                <span id="kt_count_{category}" style="font-size:11px; color:#888;">/ 0</span>
+                                <span class="kt-checkbox-wrap" title="Auto N=M (shuffle all)">
+                                    <input type="checkbox" id="kt_useAll_{category}" /> <span style="font-size:10px; color:#aaa;">all</span>
+                                </span>
+                                <span style="font-size:11px; color:#aaa;">Pfx:</span>
+                                <input type="text" id="kt_prefix_{category}" value="" placeholder="prefix..."
+                                    style="width:80px; padding:2px; background:#2a2a3e; color:#eee; border:1px solid #555;
+                                           border-radius:4px; font-size:11px;" />
+                            </span>
+                        </div>
+                        <div class="kt-tab-controls" data-category="{category}" data-polarity="neg"
+                             style="display:flex; gap:6px; align-items:center; padding:2px 0; margin-bottom:4px; flex-wrap:wrap;">
+                            <span style="font-size:11px; color:#f66;">-</span>
+                            <button id="kt_neg_bound_{category}" class="kt-bound-toggle"
+                                style="min-width:auto; padding:2px 6px; cursor:pointer; background:#555; color:#aaa;
+                                       border:1px solid #666; border-radius:4px; font-size:11px;"
+                                title="Toggle: free / bound (negative)">free</button>
+                            <span class="kt-bound-fields" style="display:none; gap:6px; align-items:center;">
+                                <span style="font-size:11px; color:#aaa;">N:</span>
+                                <input type="number" id="kt_neg_randomN_{category}" min="0" value="0"
+                                    style="width:45px; padding:2px; background:#2a2a3e; color:#eee; border:1px solid #555;
+                                           border-radius:4px; font-size:11px;" />
+                                <span id="kt_neg_count_{category}" style="font-size:11px; color:#888;">/ 0</span>
+                                <span class="kt-checkbox-wrap" title="Auto N=M (shuffle all)">
+                                    <input type="checkbox" id="kt_neg_useAll_{category}" /> <span style="font-size:10px; color:#aaa;">all</span>
+                                </span>
+                                <span style="font-size:11px; color:#aaa;">Pfx:</span>
+                                <input type="text" id="kt_neg_prefix_{category}" value="" placeholder="prefix..."
+                                    style="width:80px; padding:2px; background:#2a2a3e; color:#eee; border:1px solid #555;
+                                           border-radius:4px; font-size:11px;" />
+                            </span>
                         </div>
                     ''')
                     with gr.Row():

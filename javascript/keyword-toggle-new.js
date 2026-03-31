@@ -20,7 +20,9 @@
 //   {4$, $by {3$, $artist1|artist2|artist3}|masterpiece|detailed|in {2$, $forest|castle|clouds}}
 //
 
-// Separate keyword states for txt2img and img2img - track by keyword TEXT not ID
+// Keyword states per tab, per context. Structure: { category: { promptText: state } }
+// This allows the same keyword to appear in multiple tabs with independent states.
+// State values: 0=neutral (gray), 1=positive (green), 2=negative (red)
 const txt2imgKeywordStates = {};
 const img2imgKeywordStates = {};
 
@@ -53,6 +55,12 @@ let globalRandomN = 0;
 // When true, tab outputs are separated by "\nBREAK\n" instead of ", "
 let useBreakSeparator = false;
 
+// When true, globalRandomN auto-tracks the pool size (shuffle all)
+let globalUseAll = false;
+
+// Master toggle: when false, keywords are not injected into the prompt
+let keywordToggleEnabled = true;
+
 // === Core Functions ===
 
 function toggleKeyword(button) {
@@ -62,23 +70,24 @@ function toggleKeyword(button) {
 
     const buttonText = button.textContent.trim().replace(/^[+\-] /, '');
     const promptText = buttonToPromptMap[buttonText] || buttonText;
-    const keyword = promptText;
+    const category = getCategoryForButton(button);
 
-    if (keywordStates[keyword] === undefined) {
-        keywordStates[keyword] = 0;
+    if (!category) {
+        console.error("Could not determine category for button:", buttonText);
+        return;
     }
 
-    keywordStates[keyword] = (keywordStates[keyword] + 1) % 3;
+    // Ensure nested structure exists
+    if (!keywordStates[category]) keywordStates[category] = {};
+    if (keywordStates[category][promptText] === undefined) {
+        keywordStates[category][promptText] = 0;
+    }
 
-    const contextSelector = isImg2img ? '#tab_img2img' : '#tab_txt2img';
-    const allMatchingButtons = document.querySelectorAll(`${contextSelector} [id^="keyword_"]`);
+    keywordStates[category][promptText] = (keywordStates[category][promptText] + 1) % 3;
+    const newState = keywordStates[category][promptText];
 
-    allMatchingButtons.forEach(btn => {
-        const btnKeyword = btn.textContent.trim().replace(/^[+\-] /, '');
-        if (btnKeyword === buttonText) {
-            updateButtonAppearance(btn, keywordStates[keyword], buttonText);
-        }
-    });
+    // Only update THIS button's appearance (not other buttons with the same text in other tabs)
+    updateButtonAppearance(button, newState, buttonText);
 
     updatePrompts(isImg2img);
 }
@@ -211,15 +220,42 @@ function addGlobalStyles() {
             color: #f59e0b !important;
         }
 
+        /* Checkbox wrapper - consistent styling for all checkboxes.
+           Uses appearance:auto to get native browser checkbox with checkmark. */
+        .kt-checkbox-wrap {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            cursor: pointer !important;
+        }
+        .kt-checkbox-wrap input[type="checkbox"] {
+            -webkit-appearance: auto !important;
+            appearance: auto !important;
+            width: 16px !important;
+            height: 16px !important;
+            margin: 0 !important;
+            cursor: pointer !important;
+            accent-color: #34d399 !important;
+            opacity: 1 !important;
+            position: static !important;
+            pointer-events: auto !important;
+        }
+
         /* Per-tab controls row */
         .kt-tab-controls {
+            padding-bottom: 2px;
+        }
+        .kt-tab-controls[data-polarity="neg"] {
             border-bottom: 1px solid #333;
-            padding-bottom: 4px;
         }
 
         .kt-bound-toggle {
             transition: all 0.2s ease-in-out;
-            font-size: 12px;
+            font-size: 11px;
+        }
+
+        .kt-bound-fields {
+            display: none;
         }
 
         /* Modal overlay */
@@ -404,87 +440,89 @@ function updatePrompts(isImg2img = false) {
     let newPositiveText = cleanUserText(basePositiveText);
     let newNegativeText = cleanUserText(baseNegativeText);
 
+    // Master toggle: when OFF, skip keyword injection entirely
+    if (!keywordToggleEnabled) {
+        try {
+            positivePrompt.value = newPositiveText;
+            negativePrompt.value = newNegativeText;
+            positivePrompt.dispatchEvent(new Event('input', {bubbles: true}));
+            negativePrompt.dispatchEvent(new Event('input', {bubbles: true}));
+        } catch (e) {
+            console.error(`Error updating textareas:`, e);
+        }
+        return;
+    }
+
     // --- Two-level prompt composition ---
     //
-    // Step 1: Group positive keywords by category
-    // Step 2: For each category, build a "tab element":
-    //   - FREE tab: each keyword becomes a separate element in the global pool
-    //   - BOUND tab: all keywords become one grouped element with optional prefix and random N
-    // Step 3: Collect all elements into a global pool
-    // Step 4: Apply global random N (the dice) or join with separator
-    //
-    // Negative keywords always stay flat (no per-tab grouping, no random)
+    // Both positive and negative keywords support per-tab bound/free/prefix/N settings.
+    // Positive uses tabSettings[cat].pos, negative uses tabSettings[cat].neg.
+    // The global dice (globalRandomN) only applies to positive keywords.
 
     let posByCategory = {};  // category -> [promptText, ...]
-    let negKeywords = [];
+    let negByCategory = {};  // category -> [promptText, ...]
 
-    for (const keyword in keywordStates) {
-        const state = keywordStates[keyword];
-        if (state === 1) {
-            const cat = promptToCategoryMap[keyword] || '_uncategorized';
-            if (!posByCategory[cat]) posByCategory[cat] = [];
-            posByCategory[cat].push(keyword);
-        } else if (state === 2) {
-            negKeywords.push(keyword);
+    // Iterate per-category nested state: keywordStates[category][promptText] = state
+    for (const category in keywordStates) {
+        const catStates = keywordStates[category];
+        for (const keyword in catStates) {
+            const state = catStates[keyword];
+            if (state === 1) {
+                if (!posByCategory[category]) posByCategory[category] = [];
+                posByCategory[category].push(keyword);
+            } else if (state === 2) {
+                if (!negByCategory[category]) negByCategory[category] = [];
+                negByCategory[category].push(keyword);
+            }
         }
     }
 
-    // Build per-tab output and collect into global pool
-    // Uses categoryOrder to maintain consistent tab ordering
-    let globalPool = [];
+    // Helper: build pool from per-category keywords using bound/free settings
+    function buildPool(byCategory, polarityKey) {
+        let pool = [];
+        for (const category of categoryOrder) {
+            if (tabEnabled[category] === false) continue; // Skip disabled tabs
+            const keywords = byCategory[category];
+            if (!keywords || keywords.length === 0) continue;
 
-    for (const category of categoryOrder) {
-        const keywords = posByCategory[category];
-        if (!keywords || keywords.length === 0) continue;
+            const catSettings = tabSettings[category];
+            const s = catSettings && catSettings[polarityKey] ? catSettings[polarityKey] : { bound: false, randomN: 0, prefix: '' };
 
-        const settings = tabSettings[category] || { bound: false, randomN: 0, prefix: '' };
-
-        if (settings.bound) {
-            // BOUND tab: group all keywords into one element
-            let tabStr;
-            if (settings.randomN > 0 && keywords.length > 1) {
-                // Random selection within the tab: {N$, $kw1|kw2|...}
-                const n = Math.min(settings.randomN, keywords.length);
-                tabStr = `{${n}$$, $$${keywords.join('|')}}`;
+            if (s.bound) {
+                let tabStr;
+                if (s.randomN > 0 && keywords.length > 1) {
+                    const n = Math.min(s.randomN, keywords.length);
+                    tabStr = `{${n}$$, $$${keywords.join('|')}}`;
+                } else {
+                    tabStr = keywords.join(', ');
+                }
+                if (s.prefix) tabStr = s.prefix + tabStr;
+                pool.push(tabStr);
             } else {
-                // All keywords, stable order
-                tabStr = keywords.join(', ');
-            }
-            // Prepend prefix if set (e.g. "by " -> "by {3$, $artist1|artist2}")
-            if (settings.prefix) {
-                tabStr = settings.prefix + tabStr;
-            }
-            globalPool.push(tabStr);
-        } else {
-            // FREE tab: each keyword is a separate element in the global pool
-            for (const kw of keywords) {
-                globalPool.push(kw);
+                for (const kw of keywords) pool.push(kw);
             }
         }
-    }
-
-    // Handle uncategorized keywords (shouldn't happen normally, but safety net)
-    if (posByCategory['_uncategorized']) {
-        for (const kw of posByCategory['_uncategorized']) {
-            globalPool.push(kw);
+        // Handle categories not in categoryOrder
+        for (const category in byCategory) {
+            if (!categoryOrder.includes(category)) {
+                for (const kw of byCategory[category]) pool.push(kw);
+            }
         }
+        return pool;
     }
 
-    // Build positive prompt string from the global pool
-    if (globalPool.length > 0) {
+    // Build positive prompt
+    const posPool = buildPool(posByCategory, 'pos');
+    if (posPool.length > 0) {
         let keywordString;
-        if (globalRandomN > 0 && globalPool.length > 1) {
-            // Global dice active: wrap everything in {N$, $elem1|elem2|...}
-            const n = Math.min(globalRandomN, globalPool.length);
-            keywordString = `{${n}$$, $$${globalPool.join('|')}}`;
+        if (globalRandomN > 0 && posPool.length > 1) {
+            const n = Math.min(globalRandomN, posPool.length);
+            keywordString = `{${n}$$, $$${posPool.join('|')}}`;
         } else if (useBreakSeparator) {
-            // BREAK mode: separate tab outputs with BREAK
-            keywordString = globalPool.join('\nBREAK\n');
+            keywordString = posPool.join('\nBREAK\n');
         } else {
-            // Normal mode: comma-separated
-            keywordString = globalPool.join(', ');
+            keywordString = posPool.join(', ');
         }
-
         if (newPositiveText && newPositiveText.length > 0 &&
             !newPositiveText.endsWith(' ') && !newPositiveText.endsWith(',')) {
             newPositiveText += ', ';
@@ -492,13 +530,15 @@ function updatePrompts(isImg2img = false) {
         newPositiveText += keywordString;
     }
 
-    // Negative keywords: always flat, comma-separated (no per-tab grouping)
-    if (negKeywords.length > 0) {
+    // Build negative prompt (same bound/free logic, no global dice)
+    const negPool = buildPool(negByCategory, 'neg');
+    if (negPool.length > 0) {
+        const negString = negPool.join(', ');
         if (newNegativeText && newNegativeText.length > 0 &&
             !newNegativeText.endsWith(' ') && !newNegativeText.endsWith(',')) {
             newNegativeText += ', ';
         }
-        newNegativeText += negKeywords.join(', ');
+        newNegativeText += negString;
     }
 
     console.log(`Setting ${isImg2img ? 'img2img' : 'txt2img'} prompts to:`, newPositiveText, newNegativeText);
@@ -530,6 +570,9 @@ function updatePrompts(isImg2img = false) {
             txt2imgBaseNegativeText = cleanUserText(this.value);
         }
     });
+
+    // Update N/M counters after prompt rebuild
+    updateAllCounts();
 }
 
 // === API Functions ===
@@ -552,7 +595,10 @@ async function loadKeywordsFromFiles() {
                 categoryOrder.push(category);
                 // Initialize tabSettings for new categories (preserve existing settings)
                 if (!tabSettings[category]) {
-                    tabSettings[category] = { bound: false, randomN: 0, prefix: '' };
+                    tabSettings[category] = {
+                        pos: { bound: false, randomN: 0, prefix: '', useAll: false },
+                        neg: { bound: false, randomN: 0, prefix: '', useAll: false }
+                    };
                 }
                 keywordData[category].forEach(keywordObj => {
                     if (typeof keywordObj === 'object' && keywordObj.prompt && keywordObj.button) {
@@ -661,14 +707,25 @@ async function loadConfig() {
         if (response.ok) {
             const config = await response.json();
             globalRandomN = config.globalRandomN || 0;
+            globalUseAll = config.globalUseAll || false;
             useBreakSeparator = config.useBreakSeparator || false;
+            keywordToggleEnabled = config.keywordToggleEnabled !== false; // default true
             if (config.tabs) {
                 for (const category in config.tabs) {
-                    tabSettings[category] = {
-                        bound: config.tabs[category].bound || false,
-                        randomN: config.tabs[category].randomN || 0,
-                        prefix: config.tabs[category].prefix || ''
-                    };
+                    const t = config.tabs[category];
+                    if (t.pos) {
+                        // New format with pos/neg sub-objects
+                        tabSettings[category] = {
+                            pos: { bound: t.pos.bound || false, randomN: t.pos.randomN || 0, prefix: t.pos.prefix || '', useAll: t.pos.useAll || false },
+                            neg: { bound: (t.neg && t.neg.bound) || false, randomN: (t.neg && t.neg.randomN) || 0, prefix: (t.neg && t.neg.prefix) || '', useAll: (t.neg && t.neg.useAll) || false }
+                        };
+                    } else {
+                        // Old format: migrate to pos sub-object
+                        tabSettings[category] = {
+                            pos: { bound: t.bound || false, randomN: t.randomN || 0, prefix: t.prefix || '', useAll: t.useAll || false },
+                            neg: { bound: false, randomN: 0, prefix: '', useAll: false }
+                        };
+                    }
                 }
             }
             console.log("Config loaded:", config);
@@ -685,7 +742,9 @@ function saveConfigDebounced() {
         try {
             const config = {
                 globalRandomN,
+                globalUseAll,
                 useBreakSeparator,
+                keywordToggleEnabled,
                 tabs: {}
             };
             for (const category in tabSettings) {
@@ -884,9 +943,9 @@ async function showEditKeywordModal(category, buttonElement, currentButtonText, 
                 knownKeywords.delete(currentPromptText);
                 delete buttonToPromptMap[currentButtonText];
 
-                // Remove from keyword states
-                delete txt2imgKeywordStates[currentPromptText];
-                delete img2imgKeywordStates[currentPromptText];
+                // Remove from per-tab keyword states
+                if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][currentPromptText];
+                if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][currentPromptText];
 
                 // Remove button from DOM in both contexts
                 removeButtonFromDOM(currentButtonText);
@@ -924,14 +983,14 @@ async function showEditKeywordModal(category, buttonElement, currentButtonText, 
                 knownKeywords.add(promptText);
                 buttonToPromptMap[buttonText] = promptText;
 
-                // Transfer state from old prompt to new prompt
-                if (txt2imgKeywordStates[currentPromptText] !== undefined) {
-                    txt2imgKeywordStates[promptText] = txt2imgKeywordStates[currentPromptText];
-                    delete txt2imgKeywordStates[currentPromptText];
+                // Transfer per-tab state from old prompt to new prompt
+                if (txt2imgKeywordStates[category] && txt2imgKeywordStates[category][currentPromptText] !== undefined) {
+                    txt2imgKeywordStates[category][promptText] = txt2imgKeywordStates[category][currentPromptText];
+                    delete txt2imgKeywordStates[category][currentPromptText];
                 }
-                if (img2imgKeywordStates[currentPromptText] !== undefined) {
-                    img2imgKeywordStates[promptText] = img2imgKeywordStates[currentPromptText];
-                    delete img2imgKeywordStates[currentPromptText];
+                if (img2imgKeywordStates[category] && img2imgKeywordStates[category][currentPromptText] !== undefined) {
+                    img2imgKeywordStates[category][promptText] = img2imgKeywordStates[category][currentPromptText];
+                    delete img2imgKeywordStates[category][currentPromptText];
                 }
 
                 // Update buttons in DOM
@@ -1032,8 +1091,8 @@ function showContextMenu(e, button) {
             if (response.success) {
                 knownKeywords.delete(promptText);
                 delete buttonToPromptMap[buttonText];
-                delete txt2imgKeywordStates[promptText];
-                delete img2imgKeywordStates[promptText];
+                if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][promptText];
+                if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][promptText];
                 removeButtonFromDOM(buttonText);
                 updatePrompts(false);
                 updatePrompts(true);
@@ -1252,10 +1311,12 @@ async function initializeButtons() {
 
                 const buttonText = button.textContent.trim();
                 const promptText = buttonToPromptMap[buttonText] || buttonText;
+                const category = getCategoryForButton(button);
                 knownKeywords.add(promptText);
 
-                if (keywordStates[promptText] !== undefined) {
-                    updateButtonAppearance(button, keywordStates[promptText], buttonText);
+                // Restore button appearance from per-tab state
+                if (category && keywordStates[category] && keywordStates[category][promptText] !== undefined) {
+                    updateButtonAppearance(button, keywordStates[category][promptText], buttonText);
                 }
             }
         });
@@ -1280,13 +1341,13 @@ function setupAddButtons() {
 // === Setup New Category Button ===
 
 function setupNewCategoryButton() {
-    const btn = document.querySelector('#kt_new_category');
-    if (btn && !btn.hasAttribute('data-kt-newcat-initialized')) {
+    document.querySelectorAll('#kt_new_category').forEach(btn => {
+        if (btn.hasAttribute('data-kt-newcat-initialized')) return;
         btn.setAttribute('data-kt-newcat-initialized', 'true');
         btn.addEventListener('click', () => {
             showNewCategoryModal();
         });
-    }
+    });
 }
 
 // === Setup Global Dice Button + N Input ===
@@ -1296,17 +1357,34 @@ function setupNewCategoryButton() {
 
 function setupGlobalDiceControls() {
     // N input
-    const nInputs = document.querySelectorAll('#kt_global_random_n');
-    nInputs.forEach(input => {
+    document.querySelectorAll('#kt_global_random_n').forEach(input => {
         if (input.hasAttribute('data-kt-initialized')) return;
         input.setAttribute('data-kt-initialized', 'true');
         input.value = globalRandomN;
         input.addEventListener('input', () => {
             globalRandomN = parseInt(input.value) || 0;
-            // Sync all instances (txt2img and img2img have separate DOM)
+            globalUseAll = false; // Manual N overrides useAll
+            document.querySelectorAll('#kt_global_useAll').forEach(cb => cb.checked = false);
             document.querySelectorAll('#kt_global_random_n').forEach(i => {
                 if (i !== input) i.value = globalRandomN;
             });
+            syncGlobalDiceUI();
+            updatePrompts(false);
+            updatePrompts(true);
+            saveConfigDebounced();
+        });
+    });
+
+    // Global useAll checkbox
+    document.querySelectorAll('#kt_global_useAll').forEach(cb => {
+        if (cb.hasAttribute('data-kt-initialized')) return;
+        cb.setAttribute('data-kt-initialized', 'true');
+        cb.checked = globalUseAll;
+        cb.addEventListener('change', () => {
+            globalUseAll = cb.checked;
+            document.querySelectorAll('#kt_global_useAll').forEach(c => c.checked = globalUseAll);
+            updateAllCounts(); // This will set N=M if useAll
+            syncGlobalDiceUI();
             updatePrompts(false);
             updatePrompts(true);
             saveConfigDebounced();
@@ -1314,26 +1392,22 @@ function setupGlobalDiceControls() {
     });
 
     // Dice button: click toggles N between 0 and the global pool size
-    const diceButtons = document.querySelectorAll('#kt_order_mode');
-    diceButtons.forEach(btn => {
+    document.querySelectorAll('#kt_order_mode').forEach(btn => {
         if (btn.hasAttribute('data-kt-initialized')) return;
         btn.setAttribute('data-kt-initialized', 'true');
-        // Reflect current state
         if (globalRandomN > 0) btn.classList.add('random-mode');
 
         btn.addEventListener('click', () => {
             if (globalRandomN > 0) {
                 globalRandomN = 0;
+                globalUseAll = false;
             } else {
-                // Count current pool elements to set a sensible default
                 globalRandomN = countGlobalPoolElements();
+                globalUseAll = true;
             }
-            // Update all N inputs and dice button styles
             document.querySelectorAll('#kt_global_random_n').forEach(i => i.value = globalRandomN);
-            document.querySelectorAll('#kt_order_mode').forEach(b => {
-                if (globalRandomN > 0) b.classList.add('random-mode');
-                else b.classList.remove('random-mode');
-            });
+            document.querySelectorAll('#kt_global_useAll').forEach(cb => cb.checked = globalUseAll);
+            syncGlobalDiceUI();
             updatePrompts(false);
             updatePrompts(true);
             saveConfigDebounced();
@@ -1341,29 +1415,31 @@ function setupGlobalDiceControls() {
     });
 }
 
+function syncGlobalDiceUI() {
+    document.querySelectorAll('#kt_order_mode').forEach(b => {
+        if (globalRandomN > 0) b.classList.add('random-mode');
+        else b.classList.remove('random-mode');
+    });
+}
+
 // Helper: count how many elements would be in the global pool right now
 function countGlobalPoolElements() {
     let count = 0;
-    const keywordStates = txt2imgKeywordStates; // Use txt2img as reference
-    let posByCategory = {};
-    for (const keyword in keywordStates) {
-        if (keywordStates[keyword] === 1) {
-            const cat = promptToCategoryMap[keyword] || '_uncategorized';
-            if (!posByCategory[cat]) posByCategory[cat] = [];
-            posByCategory[cat].push(keyword);
-        }
-    }
+    const keywordStates = txt2imgKeywordStates;
     for (const category of categoryOrder) {
-        const keywords = posByCategory[category];
-        if (!keywords || keywords.length === 0) continue;
-        const settings = tabSettings[category] || { bound: false };
-        if (settings.bound) {
-            count += 1; // Bound tab = 1 element
+        const catStates = keywordStates[category] || {};
+        let activeCount = 0;
+        for (const keyword in catStates) {
+            if (catStates[keyword] === 1) activeCount++;
+        }
+        if (activeCount === 0) continue;
+        const s = tabSettings[category] && tabSettings[category].pos ? tabSettings[category].pos : { bound: false };
+        if (s.bound) {
+            count += 1;
         } else {
-            count += keywords.length; // Free tab = N elements
+            count += activeCount;
         }
     }
-    if (posByCategory['_uncategorized']) count += posByCategory['_uncategorized'].length;
     return count || 1;
 }
 
@@ -1389,86 +1465,105 @@ function setupBreakButton() {
     });
 }
 
-// === Setup Per-Tab Controls (bound/free toggle, N, prefix) ===
+// === Setup Per-Tab Controls (bound/free toggle, N, prefix, useAll, count) ===
 // Each tab has HTML controls rendered by Python. This function wires them up.
 
+// Wire up a single control row (positive or negative) for a category.
+// polarity is "pos" or "neg". The HTML IDs use "kt_neg_" prefix for negative.
+function wireTabControlRow(row, category, polarity) {
+    const prefix = polarity === 'neg' ? 'neg_' : '';
+    const settingsKey = polarity === 'neg' ? 'neg' : 'pos';
+
+    // Ensure settings structure exists
+    const settings = tabSettings[category];
+    if (!settings[settingsKey]) {
+        settings[settingsKey] = { bound: false, randomN: 0, prefix: '', useAll: false };
+    }
+    const s = settings[settingsKey];
+
+    const boundBtn = row.querySelector(`#kt_${prefix}bound_${category}`);
+    const boundFields = row.querySelector('.kt-bound-fields');
+    const nInput = row.querySelector(`#kt_${prefix}randomN_${category}`);
+    const countSpan = row.querySelector(`#kt_${prefix}count_${category}`);
+    const useAllCb = row.querySelector(`#kt_${prefix}useAll_${category}`);
+    const prefixInput = row.querySelector(`#kt_${prefix}prefix_${category}`);
+
+    function updateVisibility() {
+        if (boundBtn) {
+            boundBtn.textContent = s.bound ? 'bound' : 'free';
+            boundBtn.style.background = s.bound ? '#4a5568' : '#555';
+            boundBtn.style.color = s.bound ? '#68d391' : '#aaa';
+            boundBtn.style.borderColor = s.bound ? '#68d391' : '#666';
+        }
+        if (boundFields) boundFields.style.display = s.bound ? 'flex' : 'none';
+    }
+
+    // Initialize
+    if (nInput) nInput.value = s.randomN;
+    if (prefixInput) prefixInput.value = s.prefix;
+    if (useAllCb) useAllCb.checked = s.useAll || false;
+    updateVisibility();
+
+    if (boundBtn) {
+        boundBtn.addEventListener('click', () => {
+            s.bound = !s.bound;
+            updateVisibility();
+            syncTabControlsForCategory(category);
+            updatePrompts(false); updatePrompts(true);
+            saveConfigDebounced();
+        });
+    }
+    if (nInput) {
+        nInput.addEventListener('input', () => {
+            s.randomN = parseInt(nInput.value) || 0;
+            s.useAll = false;
+            if (useAllCb) useAllCb.checked = false;
+            syncTabControlsForCategory(category);
+            updatePrompts(false); updatePrompts(true);
+            saveConfigDebounced();
+        });
+    }
+    if (useAllCb) {
+        useAllCb.addEventListener('change', () => {
+            s.useAll = useAllCb.checked;
+            syncTabControlsForCategory(category);
+            updatePrompts(false); updatePrompts(true);
+            saveConfigDebounced();
+        });
+    }
+    if (prefixInput) {
+        prefixInput.addEventListener('input', () => {
+            s.prefix = prefixInput.value;
+            syncTabControlsForCategory(category);
+            updatePrompts(false); updatePrompts(true);
+            saveConfigDebounced();
+        });
+    }
+}
+
 function setupTabControls() {
-    const controlRows = document.querySelectorAll('.kt-tab-controls');
-    controlRows.forEach(row => {
+    document.querySelectorAll('.kt-tab-controls').forEach(row => {
         if (row.hasAttribute('data-kt-initialized')) return;
         row.setAttribute('data-kt-initialized', 'true');
 
         const category = row.dataset.category;
-        if (!category) return;
+        const polarity = row.dataset.polarity; // "pos" or "neg"
+        if (!category || !polarity) return;
 
-        const settings = tabSettings[category] || { bound: false, randomN: 0, prefix: '' };
-        tabSettings[category] = settings;
-
-        const boundBtn = row.querySelector(`#kt_bound_${category}`);
-        const nInput = row.querySelector(`#kt_randomN_${category}`);
-        const prefixInput = row.querySelector(`#kt_prefix_${category}`);
-        const prefixLabel = row.querySelector('.kt-prefix-label');
-
-        // Apply saved state to UI
-        function updateControlVisibility() {
-            if (settings.bound) {
-                boundBtn.textContent = 'bound';
-                boundBtn.style.background = '#4a5568';
-                boundBtn.style.color = '#68d391';
-                boundBtn.style.borderColor = '#68d391';
-                if (nInput) nInput.style.display = '';
-                if (prefixInput) prefixInput.style.display = '';
-                if (prefixLabel) prefixLabel.style.display = '';
-            } else {
-                boundBtn.textContent = 'free';
-                boundBtn.style.background = '#555';
-                boundBtn.style.color = '#aaa';
-                boundBtn.style.borderColor = '#666';
-                if (nInput) nInput.style.display = 'none';
-                if (prefixInput) prefixInput.style.display = 'none';
-                if (prefixLabel) prefixLabel.style.display = 'none';
-            }
+        // Ensure settings exist with both pos and neg sub-objects
+        if (!tabSettings[category]) {
+            tabSettings[category] = {};
+        }
+        if (!tabSettings[category].pos) {
+            // Migrate old flat settings to pos sub-object
+            const old = tabSettings[category];
+            tabSettings[category] = {
+                pos: { bound: old.bound || false, randomN: old.randomN || 0, prefix: old.prefix || '', useAll: old.useAll || false },
+                neg: { bound: false, randomN: 0, prefix: '', useAll: false }
+            };
         }
 
-        // Initialize from saved settings
-        if (nInput) nInput.value = settings.randomN;
-        if (prefixInput) prefixInput.value = settings.prefix;
-        updateControlVisibility();
-
-        // Bound/free toggle
-        if (boundBtn) {
-            boundBtn.addEventListener('click', () => {
-                settings.bound = !settings.bound;
-                updateControlVisibility();
-                // Sync all instances of this category's controls (txt2img/img2img)
-                syncTabControlsForCategory(category);
-                updatePrompts(false);
-                updatePrompts(true);
-                saveConfigDebounced();
-            });
-        }
-
-        // Random N input
-        if (nInput) {
-            nInput.addEventListener('input', () => {
-                settings.randomN = parseInt(nInput.value) || 0;
-                syncTabControlsForCategory(category);
-                updatePrompts(false);
-                updatePrompts(true);
-                saveConfigDebounced();
-            });
-        }
-
-        // Prefix input
-        if (prefixInput) {
-            prefixInput.addEventListener('input', () => {
-                settings.prefix = prefixInput.value;
-                syncTabControlsForCategory(category);
-                updatePrompts(false);
-                updatePrompts(true);
-                saveConfigDebounced();
-            });
-        }
+        wireTabControlRow(row, category, polarity);
     });
 }
 
@@ -1478,35 +1573,201 @@ function syncTabControlsForCategory(category) {
     if (!settings) return;
 
     document.querySelectorAll(`.kt-tab-controls[data-category="${category}"]`).forEach(row => {
-        const boundBtn = row.querySelector(`#kt_bound_${category}`);
-        const nInput = row.querySelector(`#kt_randomN_${category}`);
-        const prefixInput = row.querySelector(`#kt_prefix_${category}`);
-        const prefixLabel = row.querySelector('.kt-prefix-label');
+        const polarity = row.dataset.polarity;
+        const prefix = polarity === 'neg' ? 'neg_' : '';
+        const s = settings[polarity] || {};
+
+        const boundBtn = row.querySelector(`#kt_${prefix}bound_${category}`);
+        const boundFields = row.querySelector('.kt-bound-fields');
+        const nInput = row.querySelector(`#kt_${prefix}randomN_${category}`);
+        const useAllCb = row.querySelector(`#kt_${prefix}useAll_${category}`);
+        const prefixInput = row.querySelector(`#kt_${prefix}prefix_${category}`);
 
         if (boundBtn) {
-            if (settings.bound) {
-                boundBtn.textContent = 'bound';
-                boundBtn.style.background = '#4a5568';
-                boundBtn.style.color = '#68d391';
-                boundBtn.style.borderColor = '#68d391';
-            } else {
-                boundBtn.textContent = 'free';
-                boundBtn.style.background = '#555';
-                boundBtn.style.color = '#aaa';
-                boundBtn.style.borderColor = '#666';
+            boundBtn.textContent = s.bound ? 'bound' : 'free';
+            boundBtn.style.background = s.bound ? '#4a5568' : '#555';
+            boundBtn.style.color = s.bound ? '#68d391' : '#aaa';
+            boundBtn.style.borderColor = s.bound ? '#68d391' : '#666';
+        }
+        if (boundFields) boundFields.style.display = s.bound ? 'flex' : 'none';
+        if (nInput) nInput.value = s.randomN;
+        if (useAllCb) useAllCb.checked = s.useAll || false;
+        if (prefixInput) prefixInput.value = s.prefix;
+    });
+}
+
+// Update N/M counters for all tabs and global
+function updateAllCounts() {
+    const keywordStates = txt2imgKeywordStates;
+
+    for (const category of categoryOrder) {
+        const catStates = keywordStates[category] || {};
+        let posCount = 0, negCount = 0;
+        for (const kw in catStates) {
+            if (catStates[kw] === 1) posCount++;
+            else if (catStates[kw] === 2) negCount++;
+        }
+
+        const settings = tabSettings[category];
+        if (!settings) continue;
+
+        // Positive counts
+        if (settings.pos) {
+            if (settings.pos.useAll) {
+                settings.pos.randomN = posCount;
+                document.querySelectorAll(`#kt_randomN_${category}`).forEach(i => i.value = posCount);
             }
+            document.querySelectorAll(`#kt_count_${category}`).forEach(span => {
+                span.textContent = `/ ${posCount}`;
+            });
         }
-        if (nInput) {
-            nInput.value = settings.randomN;
-            nInput.style.display = settings.bound ? '' : 'none';
+
+        // Negative counts
+        if (settings.neg) {
+            if (settings.neg.useAll) {
+                settings.neg.randomN = negCount;
+                document.querySelectorAll(`#kt_neg_randomN_${category}`).forEach(i => i.value = negCount);
+            }
+            document.querySelectorAll(`#kt_neg_count_${category}`).forEach(span => {
+                span.textContent = `/ ${negCount}`;
+            });
         }
-        if (prefixInput) {
-            prefixInput.value = settings.prefix;
-            prefixInput.style.display = settings.bound ? '' : 'none';
-        }
-        if (prefixLabel) {
-            prefixLabel.style.display = settings.bound ? '' : 'none';
-        }
+    }
+
+    // Global count
+    const globalM = countGlobalPoolElements();
+    document.querySelectorAll('#kt_global_count').forEach(span => {
+        span.textContent = `/ ${globalM}`;
+    });
+    if (globalUseAll) {
+        globalRandomN = globalM;
+        document.querySelectorAll('#kt_global_random_n').forEach(i => i.value = globalM);
+    }
+}
+
+// === Setup Master Toggle (ON/OFF) ===
+
+function setupMasterToggle() {
+    document.querySelectorAll('#kt_master_toggle').forEach(cb => {
+        if (cb.hasAttribute('data-kt-initialized')) return;
+        cb.setAttribute('data-kt-initialized', 'true');
+        cb.checked = keywordToggleEnabled;
+
+        cb.addEventListener('change', () => {
+            keywordToggleEnabled = cb.checked;
+            // Sync all instances
+            document.querySelectorAll('#kt_master_toggle').forEach(c => c.checked = keywordToggleEnabled);
+            // Update the label text next to the checkbox
+            document.querySelectorAll('.kt-master-label').forEach(span => {
+                span.textContent = keywordToggleEnabled ? 'ON' : 'OFF';
+            });
+            updatePrompts(false);
+            updatePrompts(true);
+            saveConfigDebounced();
+        });
+    });
+}
+
+// === Setup Reset All Button ===
+
+function setupResetAll() {
+    document.querySelectorAll('#kt_reset_all').forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+
+        btn.addEventListener('click', () => {
+            // Reset all keyword states to neutral in both contexts
+            for (const cat in txt2imgKeywordStates) {
+                for (const kw in txt2imgKeywordStates[cat]) {
+                    txt2imgKeywordStates[cat][kw] = 0;
+                }
+            }
+            for (const cat in img2imgKeywordStates) {
+                for (const kw in img2imgKeywordStates[cat]) {
+                    img2imgKeywordStates[cat][kw] = 0;
+                }
+            }
+            // Reset all button appearances
+            document.querySelectorAll('[id^="keyword_"]').forEach(b => {
+                const buttonText = b.textContent.trim().replace(/^[+\-] /, '');
+                updateButtonAppearance(b, 0, buttonText);
+            });
+            updatePrompts(false);
+            updatePrompts(true);
+        });
+    });
+}
+
+// === Setup Per-Tab On/Off Toggle ===
+// Each tab has a checkbox to enable/disable its keywords in the prompt.
+
+let tabEnabled = {}; // category -> bool (default true)
+
+function setupTabEnabled() {
+    document.querySelectorAll('[id^="kt_tab_enabled_"]').forEach(cb => {
+        if (cb.hasAttribute('data-kt-initialized')) return;
+        cb.setAttribute('data-kt-initialized', 'true');
+
+        const category = cb.id.replace('kt_tab_enabled_', '');
+        if (tabEnabled[category] === undefined) tabEnabled[category] = true;
+        cb.checked = tabEnabled[category];
+
+        cb.addEventListener('change', () => {
+            tabEnabled[category] = cb.checked;
+            // Sync all instances
+            document.querySelectorAll(`#kt_tab_enabled_${category}`).forEach(c => c.checked = tabEnabled[category]);
+            updatePrompts(false);
+            updatePrompts(true);
+        });
+    });
+}
+
+// === Setup Per-Tab "Toggle All" Button ===
+// Cycles: all neutral → all positive → all negative → all neutral
+
+function setupTabToggleAll() {
+    document.querySelectorAll('[id^="kt_tab_toggle_all_"]').forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+
+        const category = btn.id.replace('kt_tab_toggle_all_', '');
+
+        btn.addEventListener('click', () => {
+            // Determine current dominant state for this tab
+            const contexts = [
+                { states: txt2imgKeywordStates, selector: '#tab_txt2img' },
+                { states: img2imgKeywordStates, selector: '#tab_img2img' }
+            ];
+
+            // Use first context to determine current state
+            const catStates = txt2imgKeywordStates[category] || {};
+            const values = Object.values(catStates);
+            const allPositive = values.length > 0 && values.every(v => v === 1);
+            const allNegative = values.length > 0 && values.every(v => v === 2);
+
+            let newState;
+            if (allPositive) newState = 2;       // all positive → all negative
+            else if (allNegative) newState = 0;  // all negative → all neutral
+            else newState = 1;                    // mixed/neutral → all positive
+
+            // Apply to both contexts
+            contexts.forEach(({ states, selector }) => {
+                if (!states[category]) states[category] = {};
+                // Get all keywords for this category from buttonToPromptMap
+                const buttons = document.querySelectorAll(`${selector} [id^="keyword_"]`);
+                buttons.forEach(b => {
+                    const bCategory = getCategoryForButton(b);
+                    if (bCategory !== category) return;
+                    const buttonText = b.textContent.trim().replace(/^[+\-] /, '');
+                    const promptText = buttonToPromptMap[buttonText] || buttonText;
+                    states[category][promptText] = newState;
+                    updateButtonAppearance(b, newState, buttonText);
+                });
+            });
+
+            updatePrompts(false);
+            updatePrompts(true);
+        });
     });
 }
 
@@ -1526,9 +1787,13 @@ window.addEventListener('load', async function() {
 
 setInterval(async function() {
     await initializeButtons();
+    setupMasterToggle();
     setupGlobalDiceControls();
     setupBreakButton();
+    setupResetAll();
     setupTabControls();
+    setupTabEnabled();
+    setupTabToggleAll();
     setupAddButtons();
     setupNewCategoryButton();
 }, 2000);
