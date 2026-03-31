@@ -1158,12 +1158,16 @@ function addButtonToDOM(category, buttonText, promptText) {
         const container = addBtn.parentElement;
         if (!container) return;
 
-        // Create new button element
+        // Create new button element matching existing Gradio keyword buttons
         const newBtn = document.createElement('button');
         newBtn.id = `keyword_${buttonText.replace(/ /g, '_')}`;
         newBtn.textContent = buttonText;
-        newBtn.className = addBtn.className; // Copy Gradio button classes
-        newBtn.classList.remove('secondary'); // Remove secondary variant
+
+        // Copy classes from an existing keyword button in this container (not from the [...] button)
+        const existingKwBtn = container.querySelector('[id^="keyword_"]');
+        if (existingKwBtn) {
+            newBtn.className = existingKwBtn.className;
+        }
 
         // Style it as neutral
         newBtn.style.cssText = `
@@ -1191,8 +1195,9 @@ function addButtonToDOM(category, buttonText, promptText) {
             showContextMenu(e, this);
         });
 
-        // Insert before the [...] button
-        container.insertBefore(newBtn, addBtn);
+        // Insert before the [...] button's wrapper (addBtn may be inside a Gradio HTML component)
+        const addBtnWrapper = addBtn.closest('.gradio-html') || addBtn.parentElement;
+        container.insertBefore(newBtn, addBtnWrapper);
     });
 }
 
