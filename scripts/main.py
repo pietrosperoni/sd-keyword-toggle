@@ -22,39 +22,70 @@ from modules import script_callbacks, scripts, shared
 class KeywordToggleScript(scripts.Script):
     def __init__(self):
         super().__init__()
+        self.keywords_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "keywords")
+        self.config = self._load_config()
         self.keywords = self.load_keywords()
 
-    def load_keywords(self):
-        """Load keywords from text files in the keywords directory"""
+    def _load_config(self):
+        config_path = os.path.join(self.keywords_dir, "config.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def load_keywords(self, include_hidden=False):
+        """Load keywords from text files in the keywords directory.
+        Respects tabOrder and hiddenTabs from config.json."""
         keywords = {}
-        keywords_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "keywords")
+        keywords_dir = self.keywords_dir
+        tab_order = self.config.get("tabOrder", [])
+        hidden_tabs = set(self.config.get("hiddenTabs", []))
 
         if os.path.exists(keywords_dir) and os.path.isdir(keywords_dir):
-            for filename in sorted(os.listdir(keywords_dir)):
+            # First, load all available categories
+            available = {}
+            for filename in os.listdir(keywords_dir):
                 if filename.endswith(".txt"):
-                    category_name = filename[:-4]  # Remove .txt extension
-                    file_path = os.path.join(keywords_dir, filename)
+                    category_name = filename[:-4]
+                    available[category_name] = os.path.join(keywords_dir, filename)
 
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            lines = [
-                                line.strip() for line in f.readlines()
-                                if line.strip() and not line.strip().startswith('//')
-                            ]
+            # Build ordered list: config order first, then any new files alphabetically
+            ordered_categories = []
+            for cat in tab_order:
+                if cat in available:
+                    ordered_categories.append(cat)
+            for cat in sorted(available.keys()):
+                if cat not in ordered_categories:
+                    ordered_categories.append(cat)
 
-                            parsed_keywords = []
-                            for line in lines:
-                                if ": " in line:
-                                    parts = line.split(": ", 1)
-                                    button_text = parts[0].strip()
-                                    prompt_text = parts[1].strip()
-                                    parsed_keywords.append({"button": button_text, "prompt": prompt_text})
-                                else:
-                                    parsed_keywords.append({"button": line, "prompt": line})
-                            keywords[category_name] = parsed_keywords
+            for category_name in ordered_categories:
+                if not include_hidden and category_name in hidden_tabs:
+                    continue
+                file_path = available[category_name]
 
-                    except Exception as e:
-                        print(f"Error reading {file_path}: {e}")
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        lines = [
+                            line.strip() for line in f.readlines()
+                            if line.strip() and not line.strip().startswith('//')
+                        ]
+
+                        parsed_keywords = []
+                        for line in lines:
+                            if ": " in line:
+                                parts = line.split(": ", 1)
+                                button_text = parts[0].strip()
+                                prompt_text = parts[1].strip()
+                                parsed_keywords.append({"button": button_text, "prompt": prompt_text})
+                            else:
+                                parsed_keywords.append({"button": line, "prompt": line})
+                        keywords[category_name] = parsed_keywords
+
+                except Exception as e:
+                    print(f"Error reading {file_path}: {e}")
 
         if not keywords:
             print("No keyword files found, using defaults")
@@ -95,6 +126,9 @@ class KeywordToggleScript(scripts.Script):
                         style="min-width:auto; padding:5px 10px; cursor:pointer;" title="Reset all keywords to neutral">🔄</button>
                     <button id="kt_new_category" class="lg secondary gradio-button svelte-cmf5ev"
                         style="min-width:auto; max-width:4em; padding:5px 10px; cursor:pointer;">📁+</button>
+                    <button id="kt_show_hidden" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; padding:5px 10px; cursor:pointer; font-size:12px;"
+                        title="Show/manage hidden tabs">👁</button>
                 </div>
             ''')
 
@@ -196,9 +230,22 @@ def on_app_started(demo, app):
     @app.get("/sd-keyword-toggle/get-keywords")
     def get_keywords():
         try:
-            return {"keywords": script.load_keywords()}
+            return {"keywords": script.load_keywords(include_hidden=False)}
         except Exception as e:
             print(f"Error loading keywords: {e}")
+            return {"error": str(e)}, 500
+
+    @app.get("/sd-keyword-toggle/get-all-categories")
+    def get_all_categories():
+        """Returns all category names including hidden ones, for tab management"""
+        try:
+            all_keywords = script.load_keywords(include_hidden=True)
+            hidden_tabs = script.config.get("hiddenTabs", [])
+            return {
+                "categories": list(all_keywords.keys()),
+                "hiddenTabs": hidden_tabs
+            }
+        except Exception as e:
             return {"error": str(e)}, 500
 
     @app.post("/sd-keyword-toggle/add-keyword")
@@ -341,6 +388,61 @@ def on_app_started(demo, app):
                 f.write(f"// Keywords for {safe_name}\n")
 
             return {"success": True, "category": safe_name}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/sd-keyword-toggle/rename-category")
+    async def rename_category(request: Request):
+        try:
+            body = await request.json()
+            old_name = body.get("old_name", "").strip()
+            new_name = body.get("new_name", "").strip()
+
+            if not old_name or not new_name:
+                return JSONResponse({"error": "Old and new names are required"}, status_code=400)
+
+            safe_new = "".join(c for c in new_name if c.isalnum() or c in (' ', '-', '_')).strip()
+            if not safe_new:
+                return JSONResponse({"error": "Invalid new name"}, status_code=400)
+
+            old_path = os.path.join(keywords_dir, f"{old_name}.txt")
+            new_path = os.path.join(keywords_dir, f"{safe_new}.txt")
+
+            if not os.path.exists(old_path):
+                return JSONResponse({"error": "Category file not found"}, status_code=404)
+            if os.path.exists(new_path):
+                return JSONResponse({"error": "A category with that name already exists"}, status_code=409)
+
+            os.rename(old_path, new_path)
+            return {"success": True, "old_name": old_name, "new_name": safe_new}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/sd-keyword-toggle/delete-category")
+    async def delete_category(request: Request):
+        try:
+            body = await request.json()
+            category = body.get("category", "").strip()
+
+            if not category:
+                return JSONResponse({"error": "Category name is required"}, status_code=400)
+
+            file_path = os.path.join(keywords_dir, f"{category}.txt")
+
+            if not os.path.exists(file_path):
+                return JSONResponse({"error": "Category file not found"}, status_code=404)
+
+            # Move to Trash folder instead of deleting permanently
+            trash_dir = os.path.join(keywords_dir, "Trash")
+            os.makedirs(trash_dir, exist_ok=True)
+            trash_path = os.path.join(trash_dir, f"{category}.txt")
+            # If already exists in trash, add a number
+            n = 2
+            while os.path.exists(trash_path):
+                trash_path = os.path.join(trash_dir, f"{category}({n}).txt")
+                n += 1
+            os.rename(file_path, trash_path)
+            return {"success": True}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
