@@ -61,6 +61,11 @@ let globalUseAll = false;
 // Master toggle: when false, keywords are not injected into the prompt
 let keywordToggleEnabled = true;
 
+// Convert category name to safe HTML ID (must match Python's _safe_id)
+function safeId(name) {
+    return name.replace(/ /g, '_').replace(/'/g, '').replace(/"/g, '');
+}
+
 // === Core Functions ===
 
 function toggleKeyword(button) {
@@ -256,6 +261,19 @@ function addGlobalStyles() {
 
         .kt-bound-fields {
             display: none;
+        }
+
+        /* Tab drag & drop reorder mode */
+        .kt-reorder-active button {
+            border: 1px dashed #60a5fa !important;
+            cursor: grab !important;
+        }
+        .kt-dragging {
+            opacity: 0.4 !important;
+        }
+        .kt-drag-over {
+            border-bottom: 3px solid #60a5fa !important;
+            background: rgba(96, 165, 250, 0.15) !important;
         }
 
         /* Copy-to dropdown */
@@ -734,6 +752,7 @@ async function loadConfig() {
             useBreakSeparator = config.useBreakSeparator || false;
             keywordToggleEnabled = config.keywordToggleEnabled !== false;
             if (config.tabOrder) categoryOrder = config.tabOrder;
+            if (config.hiddenTabs) hiddenTabs = config.hiddenTabs;
             if (config.tabs) {
                 for (const category in config.tabs) {
                     const t = config.tabs[category];
@@ -790,15 +809,16 @@ function saveConfigDebounced() {
 // === Helper: find category from a button element ===
 
 function getCategoryForButton(button) {
-    // Traverse up to find a container that has a kt_add_ button
+    // Traverse up to find a .kt-tab-controls element with data-category
     let container = button.parentElement;
     while (container) {
-        const addBtn = container.querySelector('[id^="kt_add_"]');
-        if (addBtn) {
-            return addBtn.id.replace('kt_add_', '');
+        const ctrl = container.querySelector('.kt-tab-controls[data-category]');
+        if (ctrl) return ctrl.dataset.category;
+        // Also check if the container itself is a tab-controls
+        if (container.classList && container.classList.contains('kt-tab-controls') && container.dataset.category) {
+            return container.dataset.category;
         }
         container = container.parentElement;
-        // Stop at the accordion level
         if (container && container.id && container.id.startsWith('tab_')) break;
     }
     return null;
@@ -1155,7 +1175,7 @@ function showContextMenu(e, button) {
 
 function addButtonToDOM(category, buttonText, promptText) {
     // Find all [...] buttons for this category and add the new button before them
-    const addButtons = document.querySelectorAll(`[id="kt_add_${category}"]`);
+    const addButtons = document.querySelectorAll(`[id="kt_add_${safeId(category)}"]`);
 
     addButtons.forEach(addBtn => {
         // Walk up from the [...] button to find the Gradio Row that contains keyword buttons
@@ -1381,7 +1401,7 @@ function setupAddButtons() {
         if (btn.hasAttribute('data-kt-add-initialized')) return;
         btn.setAttribute('data-kt-add-initialized', 'true');
 
-        const category = btn.id.replace('kt_add_', '');
+        const category = getCategoryForButton(btn);
         btn.addEventListener('click', () => {
             showAddKeywordModal(category);
         });
@@ -1531,12 +1551,13 @@ function wireTabControlRow(row, category, polarity) {
     }
     const s = settings[settingsKey];
 
-    const boundBtn = row.querySelector(`#kt_${prefix}bound_${category}`);
+    const sid = safeId(category);
+    const boundBtn = row.querySelector(`#kt_${prefix}bound_${sid}`);
     const boundFields = row.querySelector('.kt-bound-fields');
-    const nInput = row.querySelector(`#kt_${prefix}randomN_${category}`);
-    const countSpan = row.querySelector(`#kt_${prefix}count_${category}`);
-    const useAllCb = row.querySelector(`#kt_${prefix}useAll_${category}`);
-    const prefixInput = row.querySelector(`#kt_${prefix}prefix_${category}`);
+    const nInput = row.querySelector(`#kt_${prefix}randomN_${sid}`);
+    const countSpan = row.querySelector(`#kt_${prefix}count_${sid}`);
+    const useAllCb = row.querySelector(`#kt_${prefix}useAll_${sid}`);
+    const prefixInput = row.querySelector(`#kt_${prefix}prefix_${sid}`);
 
     function updateVisibility() {
         if (boundBtn) {
@@ -1627,11 +1648,12 @@ function syncTabControlsForCategory(category) {
         const prefix = polarity === 'neg' ? 'neg_' : '';
         const s = settings[polarity] || {};
 
-        const boundBtn = row.querySelector(`#kt_${prefix}bound_${category}`);
+        const sid = safeId(category);
+        const boundBtn = row.querySelector(`#kt_${prefix}bound_${sid}`);
         const boundFields = row.querySelector('.kt-bound-fields');
-        const nInput = row.querySelector(`#kt_${prefix}randomN_${category}`);
-        const useAllCb = row.querySelector(`#kt_${prefix}useAll_${category}`);
-        const prefixInput = row.querySelector(`#kt_${prefix}prefix_${category}`);
+        const nInput = row.querySelector(`#kt_${prefix}randomN_${sid}`);
+        const useAllCb = row.querySelector(`#kt_${prefix}useAll_${sid}`);
+        const prefixInput = row.querySelector(`#kt_${prefix}prefix_${sid}`);
 
         if (boundBtn) {
             boundBtn.textContent = s.bound ? 'bound' : 'free';
@@ -1661,13 +1683,15 @@ function updateAllCounts() {
         const settings = tabSettings[category];
         if (!settings) continue;
 
+        const sid = safeId(category);
+
         // Positive counts
         if (settings.pos) {
             if (settings.pos.useAll) {
                 settings.pos.randomN = posCount;
-                document.querySelectorAll(`#kt_randomN_${category}`).forEach(i => i.value = posCount);
+                document.querySelectorAll(`#kt_randomN_${sid}`).forEach(i => i.value = posCount);
             }
-            document.querySelectorAll(`#kt_count_${category}`).forEach(span => {
+            document.querySelectorAll(`#kt_count_${sid}`).forEach(span => {
                 span.textContent = `/ ${posCount}`;
             });
         }
@@ -1676,9 +1700,9 @@ function updateAllCounts() {
         if (settings.neg) {
             if (settings.neg.useAll) {
                 settings.neg.randomN = negCount;
-                document.querySelectorAll(`#kt_neg_randomN_${category}`).forEach(i => i.value = negCount);
+                document.querySelectorAll(`#kt_neg_randomN_${sid}`).forEach(i => i.value = negCount);
             }
-            document.querySelectorAll(`#kt_neg_count_${category}`).forEach(span => {
+            document.querySelectorAll(`#kt_neg_count_${sid}`).forEach(span => {
                 span.textContent = `/ ${negCount}`;
             });
         }
@@ -1758,14 +1782,15 @@ function setupTabEnabled() {
         if (cb.hasAttribute('data-kt-initialized')) return;
         cb.setAttribute('data-kt-initialized', 'true');
 
-        const category = cb.id.replace('kt_tab_enabled_', '');
+        const ctrl = cb.closest('.kt-tab-controls');
+        const category = ctrl ? ctrl.dataset.category : cb.id.replace('kt_tab_enabled_', '');
         if (tabEnabled[category] === undefined) tabEnabled[category] = true;
         cb.checked = tabEnabled[category];
 
         cb.addEventListener('change', () => {
             tabEnabled[category] = cb.checked;
             // Sync all instances
-            document.querySelectorAll(`#kt_tab_enabled_${category}`).forEach(c => c.checked = tabEnabled[category]);
+            document.querySelectorAll(`#kt_tab_enabled_${safeId(category)}`).forEach(c => c.checked = tabEnabled[category]);
             updatePrompts(false);
             updatePrompts(true);
         });
@@ -1780,7 +1805,8 @@ function setupTabToggleAll() {
         if (btn.hasAttribute('data-kt-initialized')) return;
         btn.setAttribute('data-kt-initialized', 'true');
 
-        const category = btn.id.replace('kt_tab_toggle_all_', '');
+        const ctrl = btn.closest('.kt-tab-controls');
+        const category = ctrl ? ctrl.dataset.category : btn.id.replace('kt_tab_toggle_all_', '');
 
         btn.addEventListener('click', () => {
             // Determine current dominant state for this tab
@@ -1833,7 +1859,8 @@ function setupCopyActive() {
         if (btn.hasAttribute('data-kt-initialized')) return;
         btn.setAttribute('data-kt-initialized', 'true');
 
-        const category = btn.id.replace('kt_copy_active_', '');
+        const ctrl = btn.closest('.kt-tab-controls');
+        const category = ctrl ? ctrl.dataset.category : btn.id.replace('kt_copy_active_', '');
 
         btn.addEventListener('click', () => {
             // Close any existing dropdown
@@ -1880,7 +1907,7 @@ function setupCopyActive() {
 function getUniqueButtonName(buttonText, destCategory) {
     // Collect existing button names in destination tab
     const existing = new Set();
-    document.querySelectorAll(`[id^="kt_add_${destCategory}"]`).forEach(addBtn => {
+    document.querySelectorAll(`[id^="kt_add_${safeId(destCategory)}"]`).forEach(addBtn => {
         const container = addBtn.closest('.row, .flex, [class*="row"]') || addBtn.parentElement;
         if (!container) return;
         container.querySelectorAll('[id^="keyword_"]').forEach(btn => {
@@ -1938,7 +1965,8 @@ function setupDeleteActive() {
         if (btn.hasAttribute('data-kt-initialized')) return;
         btn.setAttribute('data-kt-initialized', 'true');
 
-        const category = btn.id.replace('kt_delete_active_', '');
+        const ctrl = btn.closest('.kt-tab-controls');
+        const category = ctrl ? ctrl.dataset.category : btn.id.replace('kt_delete_active_', '');
 
         btn.addEventListener('click', async () => {
             // Collect active (green) keywords in this tab
@@ -1987,24 +2015,28 @@ function setupDeleteActive() {
 // Provides: Rename, Move left/right, Hide, Move to Trash
 
 function setupTabContextMenu() {
-    // Find Gradio tab header buttons inside Keyword Toggle accordions
-    const tabContainers = document.querySelectorAll('.tabs');
-    tabContainers.forEach(tabContainer => {
-        const accordion = tabContainer.closest('.accordion');
-        if (!accordion) return;
-        const label = accordion.querySelector('.label-wrap span');
-        if (!label || !label.textContent.includes('Keyword Toggle')) return;
+    // Strategy: find .kt-tab-controls elements (which have data-category),
+    // then walk up to find the parent tab container, then find its tab-nav buttons.
+    // This avoids depending on Gradio's accordion class names.
+
+    document.querySelectorAll('.kt-tab-controls[data-category][data-polarity="pos"]').forEach(ctrl => {
+        const category = ctrl.dataset.category;
+
+        // Walk up to find the .tabs container
+        let tabContainer = ctrl.closest('.tabs');
+        if (!tabContainer) return;
 
         const tabNav = tabContainer.querySelector('.tab-nav');
         if (!tabNav) return;
 
+        // Find the tab-nav button matching this category name
         tabNav.querySelectorAll('button').forEach(tabBtn => {
+            if (tabBtn.textContent.trim() !== category) return;
             if (tabBtn.hasAttribute('data-kt-tab-ctx')) return;
             tabBtn.setAttribute('data-kt-tab-ctx', 'true');
 
             tabBtn.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
-                const category = tabBtn.textContent.trim();
                 showTabContextMenu(e, category);
             });
         });
@@ -2021,8 +2053,6 @@ function showTabContextMenu(e, category) {
 
     const items = [
         { text: 'Rename', action: () => renameTab(category) },
-        { text: 'Move left', action: () => moveTab(category, -1) },
-        { text: 'Move right', action: () => moveTab(category, 1) },
         { text: 'Hide', action: () => hideTab(category) },
         { text: 'Move to Trash', action: () => trashTab(category), danger: true }
     ];
@@ -2066,11 +2096,25 @@ async function renameTab(category) {
         });
         const data = await response.json();
         if (data.success) {
-            // Update tabOrder in config
+            const nn = data.new_name;
+            // Migrate tabSettings, categoryOrder, promptToCategoryMap, keyword states
             const idx = categoryOrder.indexOf(category);
-            if (idx >= 0) categoryOrder[idx] = data.new_name;
+            if (idx >= 0) categoryOrder[idx] = nn;
+            if (tabSettings[category]) { tabSettings[nn] = tabSettings[category]; delete tabSettings[category]; }
+            if (txt2imgKeywordStates[category]) { txt2imgKeywordStates[nn] = txt2imgKeywordStates[category]; delete txt2imgKeywordStates[category]; }
+            if (img2imgKeywordStates[category]) { img2imgKeywordStates[nn] = img2imgKeywordStates[category]; delete img2imgKeywordStates[category]; }
+            for (const pt in promptToCategoryMap) {
+                if (promptToCategoryMap[pt] === category) promptToCategoryMap[pt] = nn;
+            }
+
+            // Update tab header text in DOM
+            findTabNavButtons(category).forEach(btn => btn.textContent = nn);
+            // Update data-category attributes
+            document.querySelectorAll(`.kt-tab-controls[data-category="${category}"]`).forEach(el => {
+                el.dataset.category = nn;
+            });
+
             saveConfigDebounced();
-            location.reload();
         } else {
             alert("Error: " + (data.error || "Failed to rename"));
         }
@@ -2079,34 +2123,59 @@ async function renameTab(category) {
     }
 }
 
-function moveTab(category, direction) {
-    const idx = categoryOrder.indexOf(category);
-    if (idx < 0) return;
-    const newIdx = idx + direction;
-    if (newIdx < 0 || newIdx >= categoryOrder.length) return;
+// Find Gradio tab-nav buttons matching a category name
+function findTabNavButtons(category) {
+    const results = [];
+    document.querySelectorAll('.tab-nav button').forEach(btn => {
+        if (btn.textContent.trim() === category) results.push(btn);
+    });
+    return results;
+}
 
-    // Swap
-    categoryOrder[idx] = categoryOrder[newIdx];
-    categoryOrder[newIdx] = category;
-
-    // Save and reload
-    saveConfigDebounced();
-    setTimeout(() => location.reload(), 600); // Wait for debounced save
+// Find the tab panel (tabitem) for a category by looking at the tab-nav button index
+function findTabPanel(category, tabNav) {
+    const buttons = Array.from(tabNav.querySelectorAll('button'));
+    const idx = buttons.findIndex(b => b.textContent.trim() === category);
+    if (idx < 0) return null;
+    const tabContainer = tabNav.parentElement;
+    const panels = tabContainer.querySelectorAll(':scope > .tabitem');
+    return panels[idx] || null;
 }
 
 function hideTab(category) {
     if (!confirm(`Hide tab "${category}"? You can show it again from the 👁 button.`)) return;
 
-    // Add to hiddenTabs in config — we save it directly
-    fetch('/sd-keyword-toggle/get-config').then(r => r.json()).then(config => {
-        if (!config.hiddenTabs) config.hiddenTabs = [];
-        if (!config.hiddenTabs.includes(category)) config.hiddenTabs.push(category);
-        return fetch('/sd-keyword-toggle/save-config', {
+    // Hide in DOM immediately (both tab header and panel)
+    document.querySelectorAll('.tab-nav').forEach(tabNav => {
+        const btn = Array.from(tabNav.querySelectorAll('button')).find(b => b.textContent.trim() === category);
+        if (!btn) return;
+        const panel = findTabPanel(category, tabNav);
+        btn.style.display = 'none';
+        if (panel) panel.style.display = 'none';
+    });
+
+    // Save to config
+    if (!hiddenTabs) hiddenTabs = [];
+    if (!hiddenTabs.includes(category)) hiddenTabs.push(category);
+    saveConfigWithHidden();
+}
+
+let hiddenTabs = [];
+
+async function saveConfigWithHidden() {
+    // Load current config, update hiddenTabs, save
+    try {
+        const config = await fetch('/sd-keyword-toggle/get-config').then(r => r.json());
+        config.hiddenTabs = hiddenTabs;
+        config.tabOrder = categoryOrder;
+        await fetch('/sd-keyword-toggle/save-config', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(config)
         });
-    }).then(() => location.reload());
+    } catch (e) {
+        console.error("Error saving config with hidden tabs:", e);
+    }
 }
 
 async function trashTab(category) {
@@ -2120,17 +2189,192 @@ async function trashTab(category) {
         });
         const data = await response.json();
         if (data.success) {
-            // Remove from categoryOrder
+            // Remove tab from DOM immediately
+            document.querySelectorAll('.tab-nav').forEach(tabNav => {
+                const btn = Array.from(tabNav.querySelectorAll('button')).find(b => b.textContent.trim() === category);
+                if (!btn) return;
+                const panel = findTabPanel(category, tabNav);
+                btn.remove();
+                if (panel) panel.remove();
+            });
+
+            // Remove from data structures
             const idx = categoryOrder.indexOf(category);
             if (idx >= 0) categoryOrder.splice(idx, 1);
+            delete tabSettings[category];
+            delete txt2imgKeywordStates[category];
+            delete img2imgKeywordStates[category];
+
             saveConfigDebounced();
-            setTimeout(() => location.reload(), 600);
+            updatePrompts(false);
+            updatePrompts(true);
         } else {
             alert("Error: " + (data.error || "Failed to trash"));
         }
     } catch (e) {
         alert("Error: " + e.message);
     }
+}
+
+// === Tab Drag & Drop Reordering ===
+// Makes tab header buttons draggable. Drop position determines new order.
+// Saves order to config without reload.
+
+// === Tab Reorder Mode ===
+// A toggle button activates reorder mode. In this mode:
+// - Tab buttons become draggable
+// - Clicking a tab does NOT switch to it (Gradio events blocked)
+// - Drop reorders tabs and panels in the DOM
+// Click the toggle again to exit and save.
+
+let reorderModeActive = false;
+let reorderClickBlockers = []; // Store references to blocking listeners
+
+function setupReorderButton() {
+    document.querySelectorAll('#kt_reorder_tabs').forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+
+        btn.addEventListener('click', () => {
+            if (reorderModeActive) {
+                exitReorderMode();
+            } else {
+                enterReorderMode();
+            }
+        });
+    });
+}
+
+function enterReorderMode() {
+    reorderModeActive = true;
+
+    // Style the button
+    document.querySelectorAll('#kt_reorder_tabs').forEach(btn => {
+        btn.style.borderColor = '#60a5fa';
+        btn.style.color = '#60a5fa';
+    });
+
+    // Find all KT tab-navs and make buttons draggable
+    document.querySelectorAll('.tab-nav').forEach(tabNav => {
+        const tabContainer = tabNav.parentElement;
+        if (!tabContainer || !tabContainer.querySelector('.kt-tab-controls')) return;
+
+        tabNav.classList.add('kt-reorder-active');
+
+        tabNav.querySelectorAll('button').forEach(btn => {
+            btn.draggable = true;
+            btn.style.cursor = 'grab';
+
+            // Block Gradio's click handler by capturing the event
+            const blocker = (e) => {
+                if (reorderModeActive) {
+                    e.stopImmediatePropagation();
+                    e.preventDefault();
+                }
+            };
+            btn.addEventListener('click', blocker, true); // capture phase
+            reorderClickBlockers.push({ btn, blocker });
+
+            btn.addEventListener('dragstart', tabDragStart);
+            btn.addEventListener('dragend', tabDragEnd);
+            btn.addEventListener('dragover', tabDragOver);
+            btn.addEventListener('dragleave', tabDragLeave);
+            btn.addEventListener('drop', tabDrop);
+        });
+    });
+}
+
+function exitReorderMode() {
+    reorderModeActive = false;
+
+    // Remove style from button
+    document.querySelectorAll('#kt_reorder_tabs').forEach(btn => {
+        btn.style.borderColor = '';
+        btn.style.color = '';
+    });
+
+    // Remove drag handlers and click blockers
+    document.querySelectorAll('.tab-nav.kt-reorder-active').forEach(tabNav => {
+        tabNav.classList.remove('kt-reorder-active');
+        tabNav.querySelectorAll('button').forEach(btn => {
+            btn.draggable = false;
+            btn.style.cursor = '';
+            btn.removeEventListener('dragstart', tabDragStart);
+            btn.removeEventListener('dragend', tabDragEnd);
+            btn.removeEventListener('dragover', tabDragOver);
+            btn.removeEventListener('dragleave', tabDragLeave);
+            btn.removeEventListener('drop', tabDrop);
+        });
+    });
+
+    reorderClickBlockers.forEach(({ btn, blocker }) => {
+        btn.removeEventListener('click', blocker, true);
+    });
+    reorderClickBlockers = [];
+
+    // Save the new order
+    saveConfigDebounced();
+}
+
+function tabDragStart(e) {
+    e.dataTransfer.setData('text/plain', e.target.textContent.trim());
+    e.target.classList.add('kt-dragging');
+}
+
+function tabDragEnd(e) {
+    e.target.classList.remove('kt-dragging');
+}
+
+function tabDragOver(e) {
+    e.preventDefault();
+    e.currentTarget.classList.add('kt-drag-over');
+}
+
+function tabDragLeave(e) {
+    e.currentTarget.classList.remove('kt-drag-over');
+}
+
+function tabDrop(e) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('kt-drag-over');
+    const draggedName = e.dataTransfer.getData('text/plain');
+    const targetName = e.currentTarget.textContent.trim();
+    if (draggedName === targetName) return;
+
+    const tabNav = e.currentTarget.parentElement;
+    reorderTabsInDOM(tabNav, draggedName, targetName);
+}
+
+function reorderTabsInDOM(tabNav, draggedName, targetName) {
+    const tabContainer = tabNav.parentElement;
+    const buttons = Array.from(tabNav.querySelectorAll('button'));
+    const panels = Array.from(tabContainer.querySelectorAll(':scope > .tabitem'));
+
+    const dragIdx = buttons.findIndex(b => b.textContent.trim() === draggedName);
+    const targetIdx = buttons.findIndex(b => b.textContent.trim() === targetName);
+    if (dragIdx < 0 || targetIdx < 0) return;
+
+    const dragBtn = buttons[dragIdx];
+    const targetBtn = buttons[targetIdx];
+    if (dragIdx < targetIdx) {
+        tabNav.insertBefore(dragBtn, targetBtn.nextSibling);
+    } else {
+        tabNav.insertBefore(dragBtn, targetBtn);
+    }
+
+    if (panels[dragIdx] && panels[targetIdx]) {
+        const dragPanel = panels[dragIdx];
+        const targetPanel = panels[targetIdx];
+        if (dragIdx < targetIdx) {
+            tabContainer.insertBefore(dragPanel, targetPanel.nextSibling);
+        } else {
+            tabContainer.insertBefore(dragPanel, targetPanel);
+        }
+    }
+
+    // Update categoryOrder
+    const newButtons = Array.from(tabNav.querySelectorAll('button'));
+    categoryOrder = newButtons.map(b => b.textContent.trim()).filter(n => n);
 }
 
 // === Show Hidden Tabs ===
@@ -2161,15 +2405,10 @@ function setupShowHidden() {
                 );
 
                 if (result && result.action === 'ok') {
-                    // Unhide all
-                    const config = await fetch('/sd-keyword-toggle/get-config').then(r => r.json());
-                    config.hiddenTabs = [];
-                    await fetch('/sd-keyword-toggle/save-config', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(config)
-                    });
-                    location.reload();
+                    // Unhide all — requires reload since hidden tabs weren't rendered
+                    hiddenTabs = [];
+                    await saveConfigWithHidden();
+                    alert('Hidden tabs will appear after restart/reload of the WebUI.');
                 }
             } catch (e) {
                 alert("Error: " + e.message);
@@ -2204,6 +2443,7 @@ setInterval(async function() {
     setupCopyActive();
     setupDeleteActive();
     setupTabContextMenu();
+    setupReorderButton();
     setupShowHidden();
     setupAddButtons();
     setupNewCategoryButton();

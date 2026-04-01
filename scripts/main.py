@@ -126,6 +126,9 @@ class KeywordToggleScript(scripts.Script):
                         style="min-width:auto; padding:5px 10px; cursor:pointer;" title="Reset all keywords to neutral">🔄</button>
                     <button id="kt_new_category" class="lg secondary gradio-button svelte-cmf5ev"
                         style="min-width:auto; max-width:4em; padding:5px 10px; cursor:pointer;">📁+</button>
+                    <button id="kt_reorder_tabs" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; padding:5px 10px; cursor:pointer; font-size:12px;"
+                        title="Toggle tab reorder mode (drag & drop)">↔️</button>
                     <button id="kt_show_hidden" class="lg secondary gradio-button svelte-cmf5ev"
                         style="min-width:auto; padding:5px 10px; cursor:pointer; font-size:12px;"
                         title="Show/manage hidden tabs">👁</button>
@@ -137,46 +140,50 @@ class KeywordToggleScript(scripts.Script):
 
         return []
 
+    @staticmethod
+    def _safe_id(name):
+        """Convert category name to a safe HTML ID (no spaces or special chars)"""
+        return name.replace(' ', '_').replace("'", '').replace('"', '')
+
     def render_keyword_tabs(self):
         with gr.Tabs() as tabs:
             for category, keywords_list in self.keywords.items():
+                sid = self._safe_id(category)  # Safe ID for HTML attributes
                 with gr.Tab(category):
-                    # Per-tab controls: positive row + negative row
-                    # Raw HTML inputs wired by JavaScript. Two rows: one for positive, one for negative.
                     gr.HTML(f'''
                         <div class="kt-tab-controls" data-category="{category}" data-polarity="pos"
                              style="display:flex; gap:6px; align-items:center; padding:2px 0; flex-wrap:wrap;">
                             <span class="kt-checkbox-wrap" title="Enable/disable this tab">
-                                <input type="checkbox" id="kt_tab_enabled_{category}" checked />
+                                <input type="checkbox" id="kt_tab_enabled_{sid}" checked />
                             </span>
-                            <button id="kt_tab_toggle_all_{category}" class="kt-small-btn"
+                            <button id="kt_tab_toggle_all_{sid}" class="kt-small-btn"
                                 style="min-width:auto; padding:1px 5px; cursor:pointer; background:#444; color:#aaa;
                                        border:1px solid #555; border-radius:3px; font-size:10px;"
                                 title="Cycle all: neutral → positive → negative → neutral">⊕</button>
-                            <button id="kt_copy_active_{category}" class="kt-small-btn"
+                            <button id="kt_copy_active_{sid}" class="kt-small-btn"
                                 style="min-width:auto; padding:2px 6px; cursor:pointer; background:#444; color:#aaa;
                                        border:1px solid #555; border-radius:3px; font-size:13px;"
                                 title="Copy active (green) buttons to another tab">📋</button>
-                            <button id="kt_delete_active_{category}" class="kt-small-btn"
+                            <button id="kt_delete_active_{sid}" class="kt-small-btn"
                                 style="min-width:auto; padding:2px 6px; cursor:pointer; background:#444; color:#f66;
                                        border:1px solid #555; border-radius:3px; font-size:13px;"
                                 title="Delete active (green) buttons from this tab permanently">🗑</button>
                             <span style="font-size:11px; color:#6f6;">+</span>
-                            <button id="kt_bound_{category}" class="kt-bound-toggle"
+                            <button id="kt_bound_{sid}" class="kt-bound-toggle"
                                 style="min-width:auto; padding:2px 6px; cursor:pointer; background:#555; color:#aaa;
                                        border:1px solid #666; border-radius:4px; font-size:11px;"
                                 title="Toggle: free / bound">free</button>
                             <span class="kt-bound-fields" style="display:none; gap:6px; align-items:center;">
                                 <span style="font-size:11px; color:#aaa;">N:</span>
-                                <input type="number" id="kt_randomN_{category}" min="0" value="0"
+                                <input type="number" id="kt_randomN_{sid}" min="0" value="0"
                                     style="width:45px; padding:2px; background:#2a2a3e; color:#eee; border:1px solid #555;
                                            border-radius:4px; font-size:11px;" />
-                                <span id="kt_count_{category}" style="font-size:11px; color:#888;">/ 0</span>
+                                <span id="kt_count_{sid}" style="font-size:11px; color:#888;">/ 0</span>
                                 <span class="kt-checkbox-wrap" title="Auto N=M (shuffle all)">
-                                    <input type="checkbox" id="kt_useAll_{category}" /> <span style="font-size:10px; color:#aaa;">all</span>
+                                    <input type="checkbox" id="kt_useAll_{sid}" /> <span style="font-size:10px; color:#aaa;">all</span>
                                 </span>
                                 <span style="font-size:11px; color:#aaa;">Pfx:</span>
-                                <input type="text" id="kt_prefix_{category}" value="" placeholder="prefix..."
+                                <input type="text" id="kt_prefix_{sid}" value="" placeholder="prefix..."
                                     style="width:80px; padding:2px; background:#2a2a3e; color:#eee; border:1px solid #555;
                                            border-radius:4px; font-size:11px;" />
                             </span>
@@ -184,21 +191,21 @@ class KeywordToggleScript(scripts.Script):
                         <div class="kt-tab-controls" data-category="{category}" data-polarity="neg"
                              style="display:flex; gap:6px; align-items:center; padding:2px 0; margin-bottom:4px; flex-wrap:wrap;">
                             <span style="font-size:11px; color:#f66;">-</span>
-                            <button id="kt_neg_bound_{category}" class="kt-bound-toggle"
+                            <button id="kt_neg_bound_{sid}" class="kt-bound-toggle"
                                 style="min-width:auto; padding:2px 6px; cursor:pointer; background:#555; color:#aaa;
                                        border:1px solid #666; border-radius:4px; font-size:11px;"
                                 title="Toggle: free / bound (negative)">free</button>
                             <span class="kt-bound-fields" style="display:none; gap:6px; align-items:center;">
                                 <span style="font-size:11px; color:#aaa;">N:</span>
-                                <input type="number" id="kt_neg_randomN_{category}" min="0" value="0"
+                                <input type="number" id="kt_neg_randomN_{sid}" min="0" value="0"
                                     style="width:45px; padding:2px; background:#2a2a3e; color:#eee; border:1px solid #555;
                                            border-radius:4px; font-size:11px;" />
-                                <span id="kt_neg_count_{category}" style="font-size:11px; color:#888;">/ 0</span>
+                                <span id="kt_neg_count_{sid}" style="font-size:11px; color:#888;">/ 0</span>
                                 <span class="kt-checkbox-wrap" title="Auto N=M (shuffle all)">
-                                    <input type="checkbox" id="kt_neg_useAll_{category}" /> <span style="font-size:10px; color:#aaa;">all</span>
+                                    <input type="checkbox" id="kt_neg_useAll_{sid}" /> <span style="font-size:10px; color:#aaa;">all</span>
                                 </span>
                                 <span style="font-size:11px; color:#aaa;">Pfx:</span>
-                                <input type="text" id="kt_neg_prefix_{category}" value="" placeholder="prefix..."
+                                <input type="text" id="kt_neg_prefix_{sid}" value="" placeholder="prefix..."
                                     style="width:80px; padding:2px; background:#2a2a3e; color:#eee; border:1px solid #555;
                                            border-radius:4px; font-size:11px;" />
                             </span>
@@ -208,8 +215,7 @@ class KeywordToggleScript(scripts.Script):
                         for keyword_obj in keywords_list:
                             button_text = keyword_obj['button']
                             gr.Button(button_text, elem_id=f"keyword_{button_text.replace(' ', '_')}")
-                        # Add [...] button at the end of each category (as raw HTML to avoid shifting Gradio component indices)
-                        gr.HTML(f'<button id="kt_add_{category}" class="lg secondary gradio-button svelte-cmf5ev" style="min-width: auto; max-width: 3em; padding: 5px 10px; cursor: pointer;">...</button>')
+                        gr.HTML(f'<button id="kt_add_{sid}" class="lg secondary gradio-button svelte-cmf5ev" style="min-width: auto; max-width: 3em; padding: 5px 10px; cursor: pointer;">...</button>')
         return tabs
 
     def reload_and_render_tabs(self):
