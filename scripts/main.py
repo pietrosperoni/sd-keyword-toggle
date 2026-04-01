@@ -120,10 +120,19 @@ class KeywordToggleScript(scripts.Script):
                     <span class="kt-checkbox-wrap" title="Auto N=M (shuffle all)">
                         <input type="checkbox" id="kt_global_useAll" /> <span style="font-size:11px; color:#aaa;">all</span>
                     </span>
-                    <button id="kt_break_mode" class="lg secondary gradio-button svelte-cmf5ev"
-                        style="min-width:auto; padding:5px 10px; cursor:pointer;">BREAK</button>
+                    <span style="border-left:1px solid #555; height:20px; margin:0 4px;"></span>
+                    <button id="kt_break_add" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; padding:5px 10px; cursor:pointer; font-size:12px;"
+                        title="Add a new subject (BREAK section)">BREAK++</button>
+                    <span style="font-size:12px; color:#aaa;">Subj:</span>
+                    <span id="kt_subject_display" style="font-size:13px; color:#eee; font-weight:bold;">1</span>
+                    <button id="kt_subject_prev" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; padding:2px 6px; cursor:pointer; font-size:11px;">▲</button>
+                    <button id="kt_subject_next" class="lg secondary gradio-button svelte-cmf5ev"
+                        style="min-width:auto; padding:2px 6px; cursor:pointer; font-size:11px;">▼</button>
+                    <span id="kt_subject_total" style="font-size:12px; color:#888;">on 1</span>
                     <button id="kt_reset_all" class="lg secondary gradio-button svelte-cmf5ev"
-                        style="min-width:auto; padding:5px 10px; cursor:pointer;" title="Reset all keywords to neutral">🔄</button>
+                        style="min-width:auto; padding:5px 10px; cursor:pointer;" title="Reset current subject / delete if empty">🔄</button>
                     <button id="kt_new_category" class="lg secondary gradio-button svelte-cmf5ev"
                         style="min-width:auto; max-width:4em; padding:5px 10px; cursor:pointer;">📁+</button>
                     <button id="kt_reorder_tabs" class="lg secondary gradio-button svelte-cmf5ev"

@@ -1,30 +1,40 @@
 // === State Variables ===
 //
-// ARCHITECTURE OVERVIEW - Two-level randomization system:
+// ARCHITECTURE OVERVIEW - Multi-subject system with BREAK separation:
 //
-// Each keyword tab can be in one of two modes:
-//   - FREE ("libero"): its active keywords become individual elements in the global pool
-//   - BOUND ("legato"): all active keywords in the tab are grouped into a single
-//     Dynamic Prompts expression {N$, $kw1|kw2|...} with an optional prefix.
-//     The entire expression becomes ONE element in the global pool.
+// The prompt can contain multiple "subjects", each separated by BREAK.
+// Each subject has its own independent set of keyword states and tab settings.
+// The user navigates between subjects with ▲▼ buttons.
 //
-// The global dice (🎲) controls the outer randomization:
-//   - globalRandomN = 0: elements are joined with ", " (or BREAK)
-//   - globalRandomN > 0: elements are wrapped in {globalN$, $elem1|elem2|...}
+// Within each subject, tabs can be FREE or BOUND:
+//   - FREE: keywords are individual elements in the pool
+//   - BOUND: all keywords grouped into {N$, $kw1|kw2|...} with optional prefix
 //
-// Example with 2 bound tabs and 1 free tab:
-//   Tab "Artists" BOUND, N=3, prefix="by " → 1 element: "by {3$, $artist1|artist2|artist3}"
-//   Tab "Quality" FREE, keywords: masterpiece, detailed → 2 elements
-//   Tab "Background" BOUND, N=2, prefix="in " → 1 element: "in {2$, $forest|castle|clouds}"
-//   Global pool = 4 elements. With dice N=4:
-//   {4$, $by {3$, $artist1|artist2|artist3}|masterpiece|detailed|in {2$, $forest|castle|clouds}}
+// The global dice wraps each subject's pool in {N$, $...}.
+//
+// Example with 2 subjects:
+//   Subject 1: "masterpiece, by {3$, $artist1|artist2|artist3}"
+//   Subject 2: "demon, fire, red skin"
+//   Prompt: "masterpiece, by {3$, $artist1|artist2|artist3}\nBREAK\ndemon, fire, red skin"
 //
 
-// Keyword states per tab, per context. Structure: { category: { promptText: state } }
-// This allows the same keyword to appear in multiple tabs with independent states.
-// State values: 0=neutral (gray), 1=positive (green), 2=negative (red)
-const txt2imgKeywordStates = {};
-const img2imgKeywordStates = {};
+// === Multi-subject state ===
+// Each subject contains: keywordStates, tabSettings, tabEnabled
+// txt2img and img2img share the same subjects (user works on one context at a time)
+let subjects = [
+    {
+        keywordStates: {},  // { category: { buttonText: state } }
+        tabSettings: {},    // { category: { pos: {bound,randomN,prefix,useAll}, neg: {...} } }
+        tabEnabled: {}      // { category: bool }
+    }
+];
+let currentSubject = 0;
+
+// Helper accessors for current subject
+function getCurrentSubject() { return subjects[currentSubject]; }
+function getKeywordStates() { return getCurrentSubject().keywordStates; }
+function getTabSettings() { return getCurrentSubject().tabSettings; }
+function getTabEnabled() { return getCurrentSubject().tabEnabled; }
 
 // Separate base text for each interface
 let txt2imgBasePositiveText = "";
@@ -37,29 +47,23 @@ let hasInitializedImg2img = false;
 let knownKeywords = new Set(); // Will store prompt texts
 let buttonToPromptMap = {}; // Maps button text to prompt text
 
-// Per-tab settings: maps category name to {bound: bool, randomN: int, prefix: string}
-// - bound: if true, tab keywords are grouped as one element; if false, each keyword is separate
-// - randomN: for bound tabs, how many keywords to randomly pick (0 = all, stable order)
-// - prefix: text prepended to the tab's output (e.g. "by " for artists)
-let tabSettings = {};
-
-// Maps each prompt text back to its category, so updatePrompts() can group by tab
+// Maps each prompt text back to its category
 let promptToCategoryMap = {};
 
 // Ordered list of category names, matching the visual tab order
 let categoryOrder = [];
 
-// Global dice: how many elements to pick from the global pool (0 = no global random)
+// Global dice: how many elements to pick from each subject's pool (0 = no random)
 let globalRandomN = 0;
-
-// When true, tab outputs are separated by "\nBREAK\n" instead of ", "
-let useBreakSeparator = false;
 
 // When true, globalRandomN auto-tracks the pool size (shuffle all)
 let globalUseAll = false;
 
 // Master toggle: when false, keywords are not injected into the prompt
 let keywordToggleEnabled = true;
+
+// Hidden tabs (not rendered by server, managed via 👁 button)
+let hiddenTabs = [];
 
 // Convert category name to safe HTML ID (must match Python's _safe_id)
 function safeId(name) {
@@ -69,12 +73,10 @@ function safeId(name) {
 // === Core Functions ===
 
 function toggleKeyword(button) {
-    const tabId = button.closest('#tab_img2img') ? "img2img" : "txt2img";
-    const isImg2img = tabId === "img2img";
-    const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
+    const isImg2img = button.closest('#tab_img2img') !== null;
+    const keywordStates = getKeywordStates();
 
     const buttonText = button.textContent.trim().replace(/^[+\-] /, '');
-    const promptText = buttonToPromptMap[buttonText] || buttonText;
     const category = getCategoryForButton(button);
 
     if (!category) {
@@ -82,7 +84,7 @@ function toggleKeyword(button) {
         return;
     }
 
-    // State is keyed by buttonText (unique), not promptText
+    // State is keyed by buttonText (unique per tab)
     if (!keywordStates[category]) keywordStates[category] = {};
     if (keywordStates[category][buttonText] === undefined) {
         keywordStates[category][buttonText] = 0;
@@ -438,8 +440,6 @@ function updatePrompts(isImg2img = false) {
     let positivePrompt, negativePrompt;
     let basePositiveText, baseNegativeText;
     let hasInitialized;
-    const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
-
     if (isImg2img) {
         positivePrompt = document.querySelector('#img2img_prompt textarea');
         negativePrompt = document.querySelector('#img2img_neg_prompt textarea');
@@ -492,41 +492,21 @@ function updatePrompts(isImg2img = false) {
         return;
     }
 
-    // --- Two-level prompt composition ---
+    // --- Multi-subject prompt composition ---
     //
-    // Both positive and negative keywords support per-tab bound/free/prefix/N settings.
-    // Positive uses tabSettings[cat].pos, negative uses tabSettings[cat].neg.
-    // The global dice (globalRandomN) only applies to positive keywords.
-
-    let posByCategory = {};  // category -> [promptText, ...]
-    let negByCategory = {};  // category -> [promptText, ...]
-
-    // Iterate per-category nested state: keywordStates[category][buttonText] = state
-    // Resolve buttonText → promptText via buttonToPromptMap for the actual prompt
-    for (const category in keywordStates) {
-        const catStates = keywordStates[category];
-        for (const btnText in catStates) {
-            const state = catStates[btnText];
-            const promptText = buttonToPromptMap[btnText] || btnText;
-            if (state === 1) {
-                if (!posByCategory[category]) posByCategory[category] = [];
-                posByCategory[category].push(promptText);
-            } else if (state === 2) {
-                if (!negByCategory[category]) negByCategory[category] = [];
-                negByCategory[category].push(promptText);
-            }
-        }
-    }
+    // Each subject generates its own positive pool. Subjects are joined with BREAK.
+    // Negative keywords from all subjects are collected flat.
+    // The global dice wraps each subject's pool independently.
 
     // Helper: build pool from per-category keywords using bound/free settings
-    function buildPool(byCategory, polarityKey) {
+    function buildPool(byCategory, ts, te, polarityKey) {
         let pool = [];
         for (const category of categoryOrder) {
-            if (tabEnabled[category] === false) continue; // Skip disabled tabs
+            if (te[category] === false) continue;
             const keywords = byCategory[category];
             if (!keywords || keywords.length === 0) continue;
 
-            const catSettings = tabSettings[category];
+            const catSettings = ts[category];
             const s = catSettings && catSettings[polarityKey] ? catSettings[polarityKey] : { bound: false, randomN: 0, prefix: '' };
 
             if (s.bound) {
@@ -543,7 +523,6 @@ function updatePrompts(isImg2img = false) {
                 for (const kw of keywords) pool.push(kw);
             }
         }
-        // Handle categories not in categoryOrder
         for (const category in byCategory) {
             if (!categoryOrder.includes(category)) {
                 for (const kw of byCategory[category]) pool.push(kw);
@@ -552,18 +531,55 @@ function updatePrompts(isImg2img = false) {
         return pool;
     }
 
-    // Build positive prompt
-    const posPool = buildPool(posByCategory, 'pos');
-    if (posPool.length > 0) {
-        let keywordString;
-        if (globalRandomN > 0 && posPool.length > 1) {
-            const n = Math.min(globalRandomN, posPool.length);
-            keywordString = `{${n}$$, $$${posPool.join('|')}}`;
-        } else if (useBreakSeparator) {
-            keywordString = posPool.join('\nBREAK\n');
-        } else {
-            keywordString = posPool.join(', ');
+    // Iterate all subjects to build the prompt
+    let subjectOutputs = [];
+    let allNegKeywords = [];
+
+    for (let si = 0; si < subjects.length; si++) {
+        const subj = subjects[si];
+        const ks = subj.keywordStates;
+        const ts = subj.tabSettings;
+        const te = subj.tabEnabled;
+
+        let posByCategory = {};
+        let negByCategory = {};
+
+        for (const category in ks) {
+            const catStates = ks[category];
+            for (const btnText in catStates) {
+                const state = catStates[btnText];
+                const promptText = buttonToPromptMap[btnText] || btnText;
+                if (state === 1) {
+                    if (!posByCategory[category]) posByCategory[category] = [];
+                    posByCategory[category].push(promptText);
+                } else if (state === 2) {
+                    if (!negByCategory[category]) negByCategory[category] = [];
+                    negByCategory[category].push(promptText);
+                }
+            }
         }
+
+        // Build positive pool for this subject
+        const posPool = buildPool(posByCategory, ts, te, 'pos');
+        if (posPool.length > 0) {
+            let subjectStr;
+            if (globalRandomN > 0 && posPool.length > 1) {
+                const n = Math.min(globalRandomN, posPool.length);
+                subjectStr = `{${n}$$, $$${posPool.join('|')}}`;
+            } else {
+                subjectStr = posPool.join(', ');
+            }
+            subjectOutputs.push(subjectStr);
+        }
+
+        // Collect negative keywords (flat across all subjects)
+        const negPool = buildPool(negByCategory, ts, te, 'neg');
+        allNegKeywords.push(...negPool);
+    }
+
+    // Join subjects with BREAK (only if multiple subjects with content)
+    if (subjectOutputs.length > 0) {
+        const keywordString = subjectOutputs.join('\nBREAK\n');
         if (newPositiveText && newPositiveText.length > 0 &&
             !newPositiveText.endsWith(' ') && !newPositiveText.endsWith(',')) {
             newPositiveText += ', ';
@@ -571,10 +587,9 @@ function updatePrompts(isImg2img = false) {
         newPositiveText += keywordString;
     }
 
-    // Build negative prompt (same bound/free logic, no global dice)
-    const negPool = buildPool(negByCategory, 'neg');
-    if (negPool.length > 0) {
-        const negString = negPool.join(', ');
+    // Negative prompt: flat from all subjects
+    if (allNegKeywords.length > 0) {
+        const negString = allNegKeywords.join(', ');
         if (newNegativeText && newNegativeText.length > 0 &&
             !newNegativeText.endsWith(' ') && !newNegativeText.endsWith(',')) {
             newNegativeText += ', ';
@@ -634,12 +649,14 @@ async function loadKeywordsFromFiles() {
             const keywordData = data.keywords;
             for (const category in keywordData) {
                 categoryOrder.push(category);
-                // Initialize tabSettings for new categories (preserve existing settings)
-                if (!tabSettings[category]) {
-                    tabSettings[category] = {
-                        pos: { bound: false, randomN: 0, prefix: '', useAll: false },
-                        neg: { bound: false, randomN: 0, prefix: '', useAll: false }
-                    };
+                // Initialize tabSettings for new categories in all subjects
+                for (const subj of subjects) {
+                    if (!subj.tabSettings[category]) {
+                        subj.tabSettings[category] = {
+                            pos: { bound: false, randomN: 0, prefix: '', useAll: false },
+                            neg: { bound: false, randomN: 0, prefix: '', useAll: false }
+                        };
+                    }
                 }
                 keywordData[category].forEach(keywordObj => {
                     if (typeof keywordObj === 'object' && keywordObj.prompt && keywordObj.button) {
@@ -742,6 +759,25 @@ async function apiCreateCategory(categoryName) {
 // Loads and saves per-tab settings (bound/free, randomN, prefix) and global settings.
 // Config is stored server-side in keywords/config.json.
 
+function parseTabSettings(tabs) {
+    const result = {};
+    for (const category in tabs) {
+        const t = tabs[category];
+        if (t.pos) {
+            result[category] = {
+                pos: { bound: t.pos.bound || false, randomN: t.pos.randomN || 0, prefix: t.pos.prefix || '', useAll: t.pos.useAll || false },
+                neg: { bound: (t.neg && t.neg.bound) || false, randomN: (t.neg && t.neg.randomN) || 0, prefix: (t.neg && t.neg.prefix) || '', useAll: (t.neg && t.neg.useAll) || false }
+            };
+        } else {
+            result[category] = {
+                pos: { bound: t.bound || false, randomN: t.randomN || 0, prefix: t.prefix || '', useAll: t.useAll || false },
+                neg: { bound: false, randomN: 0, prefix: '', useAll: false }
+            };
+        }
+    }
+    return result;
+}
+
 async function loadConfig() {
     try {
         const response = await fetch('/sd-keyword-toggle/get-config');
@@ -749,27 +785,30 @@ async function loadConfig() {
             const config = await response.json();
             globalRandomN = config.globalRandomN || 0;
             globalUseAll = config.globalUseAll || false;
-            useBreakSeparator = config.useBreakSeparator || false;
             keywordToggleEnabled = config.keywordToggleEnabled !== false;
             if (config.tabOrder) categoryOrder = config.tabOrder;
             if (config.hiddenTabs) hiddenTabs = config.hiddenTabs;
-            if (config.tabs) {
-                for (const category in config.tabs) {
-                    const t = config.tabs[category];
-                    if (t.pos) {
-                        // New format with pos/neg sub-objects
-                        tabSettings[category] = {
-                            pos: { bound: t.pos.bound || false, randomN: t.pos.randomN || 0, prefix: t.pos.prefix || '', useAll: t.pos.useAll || false },
-                            neg: { bound: (t.neg && t.neg.bound) || false, randomN: (t.neg && t.neg.randomN) || 0, prefix: (t.neg && t.neg.prefix) || '', useAll: (t.neg && t.neg.useAll) || false }
-                        };
-                    } else {
-                        // Old format: migrate to pos sub-object
-                        tabSettings[category] = {
-                            pos: { bound: t.bound || false, randomN: t.randomN || 0, prefix: t.prefix || '', useAll: t.useAll || false },
-                            neg: { bound: false, randomN: 0, prefix: '', useAll: false }
-                        };
-                    }
-                }
+
+            if (config.subjects) {
+                // New multi-subject format
+                subjects = config.subjects.map(s => ({
+                    keywordStates: s.keywordStates || {},
+                    tabSettings: parseTabSettings(s.tabSettings || {}),
+                    tabEnabled: s.tabEnabled || {}
+                }));
+                currentSubject = config.currentSubject || 0;
+                if (currentSubject >= subjects.length) currentSubject = 0;
+            } else if (config.tabs) {
+                // Old single-subject format: migrate
+                subjects = [{
+                    keywordStates: {},
+                    tabSettings: parseTabSettings(config.tabs),
+                    tabEnabled: {}
+                }];
+                currentSubject = 0;
+            }
+            if (subjects.length === 0) {
+                subjects = [{ keywordStates: {}, tabSettings: {}, tabEnabled: {} }];
             }
             console.log("Config loaded:", config);
         }
@@ -786,14 +825,16 @@ function saveConfigDebounced() {
             const config = {
                 globalRandomN,
                 globalUseAll,
-                useBreakSeparator,
                 keywordToggleEnabled,
                 tabOrder: categoryOrder,
-                tabs: {}
+                hiddenTabs,
+                currentSubject,
+                subjects: subjects.map(s => ({
+                    keywordStates: s.keywordStates,
+                    tabSettings: s.tabSettings,
+                    tabEnabled: s.tabEnabled
+                }))
             };
-            for (const category in tabSettings) {
-                config.tabs[category] = { ...tabSettings[category] };
-            }
             await fetch('/sd-keyword-toggle/save-config', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -989,8 +1030,8 @@ async function showEditKeywordModal(category, buttonElement, currentButtonText, 
                 delete buttonToPromptMap[currentButtonText];
 
                 // Remove from per-tab keyword states (keyed by buttonText)
-                if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][currentButtonText];
-                if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][currentButtonText];
+                if (getKeywordStates()[category]) delete getKeywordStates()[category][currentButtonText];
+                if (getKeywordStates()[category]) delete getKeywordStates()[category][currentButtonText];
 
                 // Remove button from DOM only in this category
                 removeButtonFromDOM(currentButtonText, category);
@@ -1029,13 +1070,13 @@ async function showEditKeywordModal(category, buttonElement, currentButtonText, 
                 buttonToPromptMap[buttonText] = promptText;
 
                 // Transfer per-tab state from old buttonText to new buttonText
-                if (txt2imgKeywordStates[category] && txt2imgKeywordStates[category][currentButtonText] !== undefined) {
-                    txt2imgKeywordStates[category][buttonText] = txt2imgKeywordStates[category][currentButtonText];
-                    delete txt2imgKeywordStates[category][currentButtonText];
+                if (getKeywordStates()[category] && getKeywordStates()[category][currentButtonText] !== undefined) {
+                    getKeywordStates()[category][buttonText] = getKeywordStates()[category][currentButtonText];
+                    delete getKeywordStates()[category][currentButtonText];
                 }
-                if (img2imgKeywordStates[category] && img2imgKeywordStates[category][currentButtonText] !== undefined) {
-                    img2imgKeywordStates[category][buttonText] = img2imgKeywordStates[category][currentButtonText];
-                    delete img2imgKeywordStates[category][currentButtonText];
+                if (getKeywordStates()[category] && getKeywordStates()[category][currentButtonText] !== undefined) {
+                    getKeywordStates()[category][buttonText] = getKeywordStates()[category][currentButtonText];
+                    delete getKeywordStates()[category][currentButtonText];
                 }
 
                 // Update buttons in DOM
@@ -1136,8 +1177,8 @@ function showContextMenu(e, button) {
             if (response.success) {
                 knownKeywords.delete(promptText);
                 delete buttonToPromptMap[buttonText];
-                if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][buttonText];
-                if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][buttonText];
+                if (getKeywordStates()[category]) delete getKeywordStates()[category][buttonText];
+                if (getKeywordStates()[category]) delete getKeywordStates()[category][buttonText];
                 removeButtonFromDOM(buttonText, category);
                 updatePrompts(false);
                 updatePrompts(true);
@@ -1358,7 +1399,7 @@ async function initializeButtons() {
 
     ["txt2img", "img2img"].forEach(context => {
         const tabId = context === "img2img" ? "tab_img2img" : "tab_txt2img";
-        const keywordStates = context === "img2img" ? img2imgKeywordStates : txt2imgKeywordStates;
+        const keywordStates = getKeywordStates();
 
         const buttons = document.querySelectorAll(`#${tabId} [id^="keyword_"]`);
         console.log(`Found ${buttons.length} ${context} keyword buttons`);
@@ -1495,7 +1536,7 @@ function syncGlobalDiceUI() {
 // Helper: count how many elements would be in the global pool right now
 function countGlobalPoolElements() {
     let count = 0;
-    const keywordStates = txt2imgKeywordStates;
+    const keywordStates = getKeywordStates();
     for (const category of categoryOrder) {
         const catStates = keywordStates[category] || {};
         let activeCount = 0;
@@ -1503,7 +1544,7 @@ function countGlobalPoolElements() {
             if (catStates[keyword] === 1) activeCount++;
         }
         if (activeCount === 0) continue;
-        const s = tabSettings[category] && tabSettings[category].pos ? tabSettings[category].pos : { bound: false };
+        const ts = getTabSettings(); const s = ts[category] && ts[category].pos ? ts[category].pos : { bound: false };
         if (s.bound) {
             count += 1;
         } else {
@@ -1513,26 +1554,11 @@ function countGlobalPoolElements() {
     return count || 1;
 }
 
-// === Setup BREAK Toggle ===
+// BREAK is now handled by multi-subject system (no separate toggle needed).
+// When subjects.length > 1, outputs are joined with \nBREAK\n automatically.
 
 function setupBreakButton() {
-    const btns = document.querySelectorAll('#kt_break_mode');
-    btns.forEach(btn => {
-        if (btn.hasAttribute('data-kt-initialized')) return;
-        btn.setAttribute('data-kt-initialized', 'true');
-        if (useBreakSeparator) btn.classList.add('break-active');
-
-        btn.addEventListener('click', () => {
-            useBreakSeparator = !useBreakSeparator;
-            document.querySelectorAll('#kt_break_mode').forEach(b => {
-                if (useBreakSeparator) b.classList.add('break-active');
-                else b.classList.remove('break-active');
-            });
-            updatePrompts(false);
-            updatePrompts(true);
-            saveConfigDebounced();
-        });
-    });
+    // Kept as no-op for compatibility with setInterval
 }
 
 // === Setup Per-Tab Controls (bound/free toggle, N, prefix, useAll, count) ===
@@ -1545,7 +1571,7 @@ function wireTabControlRow(row, category, polarity) {
     const settingsKey = polarity === 'neg' ? 'neg' : 'pos';
 
     // Ensure settings structure exists
-    const settings = tabSettings[category];
+    const settings = getTabSettings()[category];
     if (!settings[settingsKey]) {
         settings[settingsKey] = { bound: false, randomN: 0, prefix: '', useAll: false };
     }
@@ -1622,14 +1648,10 @@ function setupTabControls() {
         if (!category || !polarity) return;
 
         // Ensure settings exist with both pos and neg sub-objects
-        if (!tabSettings[category]) {
-            tabSettings[category] = {};
-        }
-        if (!tabSettings[category].pos) {
-            // Migrate old flat settings to pos sub-object
-            const old = tabSettings[category];
-            tabSettings[category] = {
-                pos: { bound: old.bound || false, randomN: old.randomN || 0, prefix: old.prefix || '', useAll: old.useAll || false },
+        const ts = getTabSettings();
+        if (!ts[category]) {
+            ts[category] = {
+                pos: { bound: false, randomN: 0, prefix: '', useAll: false },
                 neg: { bound: false, randomN: 0, prefix: '', useAll: false }
             };
         }
@@ -1640,7 +1662,7 @@ function setupTabControls() {
 
 // Sync per-tab control values across txt2img/img2img instances
 function syncTabControlsForCategory(category) {
-    const settings = tabSettings[category];
+    const settings = getTabSettings()[category];
     if (!settings) return;
 
     document.querySelectorAll(`.kt-tab-controls[data-category="${category}"]`).forEach(row => {
@@ -1670,7 +1692,7 @@ function syncTabControlsForCategory(category) {
 
 // Update N/M counters for all tabs and global
 function updateAllCounts() {
-    const keywordStates = txt2imgKeywordStates;
+    const keywordStates = getKeywordStates();
 
     for (const category of categoryOrder) {
         const catStates = keywordStates[category] || {};
@@ -1680,7 +1702,7 @@ function updateAllCounts() {
             else if (catStates[kw] === 2) negCount++;
         }
 
-        const settings = tabSettings[category];
+        const settings = getTabSettings()[category];
         if (!settings) continue;
 
         const sid = safeId(category);
@@ -1750,24 +1772,7 @@ function setupResetAll() {
         btn.setAttribute('data-kt-initialized', 'true');
 
         btn.addEventListener('click', () => {
-            // Reset all keyword states to neutral in both contexts
-            for (const cat in txt2imgKeywordStates) {
-                for (const kw in txt2imgKeywordStates[cat]) {
-                    txt2imgKeywordStates[cat][kw] = 0;
-                }
-            }
-            for (const cat in img2imgKeywordStates) {
-                for (const kw in img2imgKeywordStates[cat]) {
-                    img2imgKeywordStates[cat][kw] = 0;
-                }
-            }
-            // Reset all button appearances
-            document.querySelectorAll('[id^="keyword_"]').forEach(b => {
-                const buttonText = b.textContent.trim().replace(/^[+\-] /, '');
-                updateButtonAppearance(b, 0, buttonText);
-            });
-            updatePrompts(false);
-            updatePrompts(true);
+            resetOrDeleteCurrentSubject();
         });
     });
 }
@@ -1784,13 +1789,13 @@ function setupTabEnabled() {
 
         const ctrl = cb.closest('.kt-tab-controls');
         const category = ctrl ? ctrl.dataset.category : cb.id.replace('kt_tab_enabled_', '');
-        if (tabEnabled[category] === undefined) tabEnabled[category] = true;
-        cb.checked = tabEnabled[category];
+        if (getTabEnabled()[category] === undefined) getTabEnabled()[category] = true;
+        cb.checked = getTabEnabled()[category];
 
         cb.addEventListener('change', () => {
-            tabEnabled[category] = cb.checked;
+            getTabEnabled()[category] = cb.checked;
             // Sync all instances
-            document.querySelectorAll(`#kt_tab_enabled_${safeId(category)}`).forEach(c => c.checked = tabEnabled[category]);
+            document.querySelectorAll(`#kt_tab_enabled_${safeId(category)}`).forEach(c => c.checked = getTabEnabled()[category]);
             updatePrompts(false);
             updatePrompts(true);
         });
@@ -1809,15 +1814,8 @@ function setupTabToggleAll() {
         const category = ctrl ? ctrl.dataset.category : btn.id.replace('kt_tab_toggle_all_', '');
 
         btn.addEventListener('click', () => {
-            // Determine current dominant state for this tab
-            const contexts = [
-                { states: txt2imgKeywordStates, selector: '#tab_txt2img' },
-                { states: img2imgKeywordStates, selector: '#tab_img2img' }
-            ];
-
-            // Use first context to determine current state
-            // Note: buttons that were never clicked have no state entry, treat as neutral (0)
-            const catStates = txt2imgKeywordStates[category] || {};
+            // Determine current dominant state for this tab in current subject
+            const catStates = getKeywordStates()[category] || {};
             const values = Object.values(catStates);
             const allPositive = values.length > 0 && values.every(v => v === 1);
             const allNegative = values.length > 0 && values.every(v => v === 2);
@@ -1830,18 +1828,15 @@ function setupTabToggleAll() {
             else if (allNegative) newState = 0;
             else newState = 1; // mixed → all positive
 
-            // Apply to both contexts
-            contexts.forEach(({ states, selector }) => {
-                if (!states[category]) states[category] = {};
-                // Get all keywords for this category from buttonToPromptMap
-                const buttons = document.querySelectorAll(`${selector} [id^="keyword_"]`);
-                buttons.forEach(b => {
-                    const bCategory = getCategoryForButton(b);
-                    if (bCategory !== category) return;
-                    const buttonText = b.textContent.trim().replace(/^[+\-] /, '');
-                    states[category][buttonText] = newState;
-                    updateButtonAppearance(b, newState, buttonText);
-                });
+            // Apply to current subject, update all button instances in DOM
+            const ks = getKeywordStates();
+            if (!ks[category]) ks[category] = {};
+            document.querySelectorAll('[id^="keyword_"]').forEach(b => {
+                const bCategory = getCategoryForButton(b);
+                if (bCategory !== category) return;
+                const buttonText = b.textContent.trim().replace(/^[+\-] /, '');
+                ks[category][buttonText] = newState;
+                updateButtonAppearance(b, newState, buttonText);
             });
 
             updatePrompts(false);
@@ -1924,7 +1919,7 @@ function getUniqueButtonName(buttonText, destCategory) {
 
 async function copyActiveToCategory(sourceCategory, destCategory, isImg2img) {
     // Find all positive keywords in source tab
-    const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
+    const keywordStates = getKeywordStates();
     const catStates = keywordStates[sourceCategory] || {};
     let copied = 0;
 
@@ -1971,7 +1966,7 @@ function setupDeleteActive() {
         btn.addEventListener('click', async () => {
             // Collect active (green) keywords in this tab
             const isImg2img = btn.closest('#tab_img2img') !== null;
-            const keywordStates = isImg2img ? img2imgKeywordStates : txt2imgKeywordStates;
+            const keywordStates = getKeywordStates();
             const catStates = keywordStates[category] || {};
             const activeKeywords = [];
             for (const buttonText in catStates) {
@@ -1997,8 +1992,8 @@ function setupDeleteActive() {
                     if (response.success) {
                         knownKeywords.delete(promptText);
                         delete buttonToPromptMap[buttonText];
-                        if (txt2imgKeywordStates[category]) delete txt2imgKeywordStates[category][buttonText];
-                        if (img2imgKeywordStates[category]) delete img2imgKeywordStates[category][buttonText];
+                        if (getKeywordStates()[category]) delete getKeywordStates()[category][buttonText];
+                        if (getKeywordStates()[category]) delete getKeywordStates()[category][buttonText];
                         removeButtonFromDOM(buttonText, category);
                     }
                 } catch (e) {
@@ -2100,9 +2095,12 @@ async function renameTab(category) {
             // Migrate tabSettings, categoryOrder, promptToCategoryMap, keyword states
             const idx = categoryOrder.indexOf(category);
             if (idx >= 0) categoryOrder[idx] = nn;
-            if (tabSettings[category]) { tabSettings[nn] = tabSettings[category]; delete tabSettings[category]; }
-            if (txt2imgKeywordStates[category]) { txt2imgKeywordStates[nn] = txt2imgKeywordStates[category]; delete txt2imgKeywordStates[category]; }
-            if (img2imgKeywordStates[category]) { img2imgKeywordStates[nn] = img2imgKeywordStates[category]; delete img2imgKeywordStates[category]; }
+            // Migrate all subjects' data for this category
+            for (const subj of subjects) {
+                if (subj.tabSettings[category]) { subj.tabSettings[nn] = subj.tabSettings[category]; delete subj.tabSettings[category]; }
+                if (subj.keywordStates[category]) { subj.keywordStates[nn] = subj.keywordStates[category]; delete subj.keywordStates[category]; }
+                if (subj.tabEnabled[category] !== undefined) { subj.tabEnabled[nn] = subj.tabEnabled[category]; delete subj.tabEnabled[category]; }
+            }
             for (const pt in promptToCategoryMap) {
                 if (promptToCategoryMap[pt] === category) promptToCategoryMap[pt] = nn;
             }
@@ -2160,8 +2158,6 @@ function hideTab(category) {
     saveConfigWithHidden();
 }
 
-let hiddenTabs = [];
-
 async function saveConfigWithHidden() {
     // Load current config, update hiddenTabs, save
     try {
@@ -2201,9 +2197,11 @@ async function trashTab(category) {
             // Remove from data structures
             const idx = categoryOrder.indexOf(category);
             if (idx >= 0) categoryOrder.splice(idx, 1);
-            delete tabSettings[category];
-            delete txt2imgKeywordStates[category];
-            delete img2imgKeywordStates[category];
+            for (const subj of subjects) {
+                delete subj.tabSettings[category];
+                delete subj.keywordStates[category];
+                delete subj.tabEnabled[category];
+            }
 
             saveConfigDebounced();
             updatePrompts(false);
@@ -2219,6 +2217,127 @@ async function trashTab(category) {
 // === Tab Drag & Drop Reordering ===
 // Makes tab header buttons draggable. Drop position determines new order.
 // Saves order to config without reload.
+
+// === Multi-Subject Navigation ===
+
+function switchToSubject(newIndex) {
+    if (newIndex < 0 || newIndex >= subjects.length) return;
+    currentSubject = newIndex;
+    refreshAllButtonAppearances();
+    refreshAllTabControls();
+    updateSubjectDisplay();
+    updatePrompts(false);
+    updatePrompts(true);
+    saveConfigDebounced();
+}
+
+function addSubject() {
+    // Create new empty subject with default settings for all known categories
+    const newSubject = { keywordStates: {}, tabSettings: {}, tabEnabled: {} };
+    for (const cat of categoryOrder) {
+        newSubject.tabSettings[cat] = {
+            pos: { bound: false, randomN: 0, prefix: '', useAll: false },
+            neg: { bound: false, randomN: 0, prefix: '', useAll: false }
+        };
+    }
+    subjects.push(newSubject);
+    switchToSubject(subjects.length - 1);
+}
+
+function resetOrDeleteCurrentSubject() {
+    const subj = getCurrentSubject();
+    const ks = subj.keywordStates;
+    let hasActive = false;
+    for (const cat in ks) {
+        for (const kw in ks[cat]) {
+            if (ks[cat][kw] !== 0) { hasActive = true; break; }
+        }
+        if (hasActive) break;
+    }
+
+    if (!hasActive && subjects.length > 1) {
+        // Subject is empty and there are others: delete it
+        subjects.splice(currentSubject, 1);
+        if (currentSubject >= subjects.length) currentSubject = subjects.length - 1;
+        switchToSubject(currentSubject);
+    } else {
+        // Reset all keyword states to neutral in this subject
+        for (const cat in ks) {
+            for (const kw in ks[cat]) {
+                ks[cat][kw] = 0;
+            }
+        }
+        refreshAllButtonAppearances();
+        updatePrompts(false);
+        updatePrompts(true);
+        saveConfigDebounced();
+    }
+}
+
+function refreshAllButtonAppearances() {
+    const ks = getKeywordStates();
+    document.querySelectorAll('[id^="keyword_"]').forEach(btn => {
+        if (!btn.hasAttribute('data-kw-initialized')) return;
+        const buttonText = btn.textContent.trim().replace(/^[+\-] /, '');
+        const category = getCategoryForButton(btn);
+        let state = 0;
+        if (category && ks[category] && ks[category][buttonText] !== undefined) {
+            state = ks[category][buttonText];
+        }
+        updateButtonAppearance(btn, state, buttonText);
+    });
+}
+
+function refreshAllTabControls() {
+    // Re-wire tab controls to reflect current subject's settings.
+    // Remove initialized flag so they get re-wired on next setInterval tick.
+    document.querySelectorAll('.kt-tab-controls[data-kt-initialized]').forEach(row => {
+        row.removeAttribute('data-kt-initialized');
+    });
+    // Also re-wire tab enabled checkboxes
+    document.querySelectorAll('[id^="kt_tab_enabled_"]').forEach(cb => {
+        cb.removeAttribute('data-kt-initialized');
+    });
+}
+
+function updateSubjectDisplay() {
+    document.querySelectorAll('#kt_subject_display').forEach(el => {
+        el.textContent = (currentSubject + 1).toString();
+    });
+    document.querySelectorAll('#kt_subject_total').forEach(el => {
+        el.textContent = `on ${subjects.length}`;
+    });
+}
+
+function setupSubjectControls() {
+    // BREAK++ button
+    document.querySelectorAll('#kt_break_add').forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+        btn.addEventListener('click', () => addSubject());
+    });
+
+    // Subject prev (▲)
+    document.querySelectorAll('#kt_subject_prev').forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+        btn.addEventListener('click', () => {
+            if (currentSubject > 0) switchToSubject(currentSubject - 1);
+        });
+    });
+
+    // Subject next (▼)
+    document.querySelectorAll('#kt_subject_next').forEach(btn => {
+        if (btn.hasAttribute('data-kt-initialized')) return;
+        btn.setAttribute('data-kt-initialized', 'true');
+        btn.addEventListener('click', () => {
+            if (currentSubject < subjects.length - 1) switchToSubject(currentSubject + 1);
+        });
+    });
+
+    // Update display
+    updateSubjectDisplay();
+}
 
 // === Tab Reorder Mode ===
 // A toggle button activates reorder mode. In this mode:
@@ -2435,7 +2554,7 @@ setInterval(async function() {
     await initializeButtons();
     setupMasterToggle();
     setupGlobalDiceControls();
-    setupBreakButton();
+    setupSubjectControls();
     setupResetAll();
     setupTabControls();
     setupTabEnabled();
